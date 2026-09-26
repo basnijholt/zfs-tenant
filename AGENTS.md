@@ -24,6 +24,7 @@ nix/
 ├── sender-module.nix     # services.zfs-tenant-sender
 ├── integration-test.nix  # two-node VM test, real OpenZFS and syncoid
 └── integration/          # throwaway SSH keys for the VM test only
+docs/                     # Zensical site, deployed to https://zfs-tenant.nijho.lt
 ```
 
 ## Key Design Decisions
@@ -48,6 +49,8 @@ Use `just` for common tasks. Run `just` to list available commands:
 | `just lint` | Lint, format, and type check |
 | `just pyz` | Build `dist/zfs-tenant.pyz` |
 | `just vm-test` | Two-node NixOS VM test with real OpenZFS and syncoid |
+| `just docs` | Regenerate `docs/` from README sections and build the site |
+| `just docs-serve` | Serve the docs site locally |
 | `just clean` | Clean build artifacts |
 
 ## Testing
@@ -55,6 +58,11 @@ Use `just` for common tasks. Run `just` to list available commands:
 - Unit tests never touch ZFS. `tests/test_gate.py` injects fake `Effects` (runner, spawner, log, error writer); `tests/test_cli.py` runs `python -m zfs_tenant gate` against a fake `zfs` shell script to check the environment, stdin, and exit-status wiring.
 - `nix/integration-test.nix` is the ground truth for ZFS and syncoid behavior. When the grammar changes, run `just vm-test`. When a syncoid push fails there, the test prints the push journal and the gate's auth log.
 - Any new accepted command needs rejection tests for its near misses (outside the root, the root itself, extra flags).
+
+## Documentation
+
+- `README.md` is the single source of truth. Its `<!-- SECTION:name:START/END -->` markers feed the `docs/*.md` pages through `markdown-code-runner`'s `include_section`; only `docs/design.md` is written by hand.
+- After editing the README, run `just docs` and commit the regenerated `docs/*.md`. CI regenerates them before every build anyway, so the site never goes stale.
 
 ## Communication Notes
 

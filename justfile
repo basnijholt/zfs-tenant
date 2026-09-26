@@ -34,7 +34,17 @@ pyz:
 vm-test:
     nix build .#checks.x86_64-linux.integration --no-link -L
 
+# Regenerate docs/ from README.md sections and build the site
+docs:
+    uv run --group docs markdown-code-runner docs/*.md
+    uv run --group docs zensical build
+
+# Serve the docs site locally with live reload
+docs-serve:
+    uv run --group docs markdown-code-runner docs/*.md
+    uv run --group docs zensical serve
+
 # Clean up build artifacts and caches
 clean:
-    rm -rf .pytest_cache .mypy_cache .ruff_cache dist build result
+    rm -rf .pytest_cache .mypy_cache .ruff_cache dist build result site
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

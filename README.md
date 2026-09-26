@@ -4,8 +4,11 @@
 [![Python](https://img.shields.io/pypi/pyversions/zfs-tenant)](https://pypi.org/project/zfs-tenant/)
 [![License](https://img.shields.io/github/license/basnijholt/zfs-tenant)](LICENSE)
 [![CI](https://github.com/basnijholt/zfs-tenant/actions/workflows/ci.yml/badge.svg)](https://github.com/basnijholt/zfs-tenant/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-zfs--tenant.nijho.lt-blue)](https://zfs-tenant.nijho.lt)
 
 <img src="https://raw.githubusercontent.com/basnijholt/zfs-tenant/main/docs/logo.svg" alt="zfs-tenant logo" align="right" width="200" />
+
+<!-- SECTION:intro:START -->
 
 Give a friend a quota-capped corner of your ZFS pool for their encrypted backups, without giving them a shell or a look at your data.
 
@@ -14,6 +17,8 @@ Give a friend a quota-capped corner of your ZFS pool for their encrypted backups
 > OpenZFS delegation (`zfs allow`) keeps them inside one dataset you created for them, a small SSH forced command (the *gate*) makes sure the only thing their key can run is the handful of `zfs` commands a backup needs, and `zfs zone` makes the kernel hide the rest of your pool from those commands.
 > Their keys never leave their house, so you can never read what they store.
 > There is no VM or iSCSI involved.
+
+<!-- SECTION:intro:END -->
 
 ## Table of Contents
 
@@ -37,6 +42,8 @@ Give a friend a quota-capped corner of your ZFS pool for their encrypted backups
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+<!-- SECTION:why:START -->
+
 ## Why
 
 A friend with a ZFS box is the cheapest off-site backup there is: you store their snapshots, they store yours.
@@ -50,6 +57,10 @@ OpenZFS already has the permission system: `zfs allow` can delegate `receive`, `
 What delegation alone does not do is stop that user from listing every dataset on your machine, or from running anything else once they can log in.
 zfs-tenant closes that gap twice: a forced command that only runs backup commands, and a user namespace that `zfs zone` restricts to the friend's own datasets.
 It also comes with the setup commands and NixOS modules that turn all of it into a few lines of config on both sides.
+
+<!-- SECTION:why:END -->
+
+<!-- SECTION:how-it-works:START -->
 
 ## How it works
 
@@ -76,6 +87,10 @@ The kernel is the jail; the gate removes the shell.
 4. **The zone.** A small service keeps a Linux user namespace alive for Joe, in which his uid maps to itself, and `zfs zone` attaches his root to it with `zoned=on`. The gate joins that namespace before it does anything, and the ZFS kernel module then answers `dataset does not exist` for every dataset that is not Joe's. Joe keeps his own uid in there, so he holds no capabilities and `zfs allow` still decides what he may change. If the service is down, the gate refuses to run.
 5. **Raw sends.** Joe sends with `zfs send -w`, so his blocks arrive still encrypted with his key. The gate refuses and removes any newly received dataset that is not encrypted.
 
+<!-- SECTION:how-it-works:END -->
+
+<!-- SECTION:security-model:START -->
+
 ## Security model
 
 | Promise | Enforced by |
@@ -90,7 +105,11 @@ The kernel is the jail; the gate removes the shell.
 | Nothing of Joe's ever gets mounted or shared on your machine | `zoned=on` (the host never mounts zoned datasets, so it never shares them), plus `mountpoint=none`, `canmount=off`, `readonly=on`, `exec=off`, `setuid=off`, `devices=off`, `volmode=none` on the root; the gate always receives with `-u`; property overrides inside a stream fail with `permission denied` |
 | Joe's key cannot run anything else | the forced command; the gate never uses a shell |
 
-Every row is exercised by a two-node NixOS VM test with real OpenZFS and real syncoid ([`nix/integration-test.nix`](nix/integration-test.nix)).
+Every row is exercised by a two-node NixOS VM test with real OpenZFS and real syncoid ([`nix/integration-test.nix`](https://github.com/basnijholt/zfs-tenant/blob/main/nix/integration-test.nix)).
+
+<!-- SECTION:security-model:END -->
+
+<!-- SECTION:cannot-hide:START -->
 
 ### What it cannot hide
 
@@ -102,6 +121,10 @@ Give datasets you send to a friend boring names, and never send with `-p` or `-R
 You are also root on your own machine.
 You can always delete Joe's backup copy, even though you can never read it.
 
+<!-- SECTION:cannot-hide:END -->
+
+<!-- SECTION:residual-risks:START -->
+
 ### Residual risks
 
 - The kernel parses the send streams Joe sends you. That is the same exposure as any ZFS replication.
@@ -110,6 +133,10 @@ You can always delete Joe's backup copy, even though you can never read it.
 - syncoid 2.3.0 pastes the resume token it gets from the receiving host into a shell on the sending machine without escaping it, so a malicious host could run commands on the sender as the user running syncoid.
   The sender module therefore runs syncoid as a dedicated user that holds only `zfs send` and `hold` rights on the datasets it pushes.
   If you push by hand, do the same.
+
+<!-- SECTION:residual-risks:END -->
+
+<!-- SECTION:quick-start-nixos:START -->
 
 ## Quick start on NixOS
 
@@ -176,6 +203,10 @@ The source dataset (`tank/offsite` here) must be encrypted, and sanoid should sn
 
 On the tailnet, allow only Joe's node to reach port 22 on your host.
 
+<!-- SECTION:quick-start-nixos:END -->
+
+<!-- SECTION:manual-setup:START -->
+
 ## Manual setup (TrueNAS SCALE or any Linux)
 
 The gate uses only the Python standard library, so a single file is enough.
@@ -215,6 +246,10 @@ Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` wher
 
    `setup` sets `zoned=on`, and the gate command above refuses to run until this holder is up. The kernel must allow unprivileged user namespaces (Debian and NixOS do by default).
 
+<!-- SECTION:manual-setup:END -->
+
+<!-- SECTION:syncoid-by-hand:START -->
+
 ## Pushing with syncoid by hand
 
 ```bash
@@ -231,6 +266,10 @@ syncoid --no-privilege-elevation --no-sync-snap --sendoptions=w --compress=none 
 
 The receive always runs with `-u` and never with `-F`; the gate drops `-F` because nothing under a tenant root can be mounted or modified between receives.
 Run syncoid as a non-root user with `zfs allow -u <user> send,hold <dataset>` on the sending side.
+
+<!-- SECTION:syncoid-by-hand:END -->
+
+<!-- SECTION:restoring:START -->
 
 ## Restoring
 
@@ -252,6 +291,10 @@ ssh joe@bas-nas zfs send -t "$token" | zfs receive -s -u tank/restored/photos
 
 List what the host keeps for you with `ssh joe@bas-nas zfs list -r -t all -o name,used,creation`.
 
+<!-- SECTION:restoring:END -->
+
+<!-- SECTION:removing-datasets:START -->
+
 ## Removing datasets
 
 Everything below your root is yours to remove:
@@ -260,6 +303,10 @@ Everything below your root is yours to remove:
 ssh joe@bas-nas zfs destroy -r tank/friends/joe/old
 ssh joe@bas-nas zfs destroy tank/friends/joe/offsite@autosnap_2026-01-01_00:00:01_daily
 ```
+
+<!-- SECTION:removing-datasets:END -->
+
+<!-- SECTION:gate-allows:START -->
 
 ## What the gate allows
 
@@ -283,6 +330,10 @@ ssh joe@bas-nas zfs destroy tank/friends/joe/offsite@autosnap_2026-01-01_00:00:0
 
 Anything else exits 126 with `zfs-tenant: command not allowed: <reason>`, and every decision is logged to the auth log with the tenant root.
 Every allowed command runs inside the tenant's zone.
+
+<!-- SECTION:gate-allows:END -->
+
+<!-- SECTION:faq:START -->
 
 ## FAQ
 
@@ -309,6 +360,10 @@ The gate's input is an untrusted string.
 Parsing it in shell invites word splitting and injection; Python gives a real tokenizer, strict allowlists, `exec` of an argument list, and unit tests.
 It stays dependency-free so it runs from a single file on appliances.
 
+<!-- SECTION:faq:END -->
+
+<!-- SECTION:development:START -->
+
 ## Development
 
 ```bash
@@ -317,7 +372,10 @@ just test     # unit tests
 just lint     # ruff, mypy, ty
 just vm-test  # two-node NixOS VM test with real OpenZFS and syncoid
 just pyz      # build dist/zfs-tenant.pyz
+just docs     # regenerate docs/ from README.md sections and build the site
 ```
+
+<!-- SECTION:development:END -->
 
 ## License
 

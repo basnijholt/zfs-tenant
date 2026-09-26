@@ -45,7 +45,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/basnijholt/zfs-tenant"
 Repository = "https://github.com/basnijholt/zfs-tenant"
-Documentation = "https://github.com/basnijholt/zfs-tenant#readme"
+Documentation = "https://zfs-tenant.nijho.lt"
 Issues = "https://github.com/basnijholt/zfs-tenant/issues"
 Changelog = "https://github.com/basnijholt/zfs-tenant/releases"
 
@@ -114,4 +114,9 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.0",
     "ty>=0.0.1a13",
+]
+docs = [
+    "markdown-code-runner>=2.7.0",
+    "markdown-gfm-admonition",
+    "zensical",
 ]

@@ -9,3 +9,4 @@ build/
 src/zfs_tenant/_version.py
 result
 result-*
+site/
