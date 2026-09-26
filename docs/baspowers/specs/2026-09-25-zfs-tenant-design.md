@@ -228,6 +228,6 @@ Runs syncoid as the system user `zfs-tenant-sender` with `zfs allow -u zfs-tenan
 
 ## Packaging and repository
 
-Mirrors `basnijholt/pytest-shm`: src layout, hatchling + hatch-vcs, uv, ruff (`ALL`), mypy strict, ty, prek/pre-commit, justfile, `CLAUDE.md` with `AGENTS.md`/`GEMINI.md` symlinks, animated `docs/logo.svg`, README with TOC.
+Mirrors `basnijholt/pytest-shm`: src layout, hatchling + hatch-vcs, uv, ruff (`ALL`), mypy strict, ty, prek/pre-commit, justfile, `AGENTS.md` for coding agents, animated `docs/logo.svg`, README with TOC.
 Workflows: CI (pytest 3.10-3.14, lint, Nix job with KVM running flake checks and the VM test), release (PyPI trusted publishing plus the `.pyz` asset built with `python -m zipapp`), release-drafter, TOC, renovate.
 Public repository `github.com/basnijholt/zfs-tenant`.

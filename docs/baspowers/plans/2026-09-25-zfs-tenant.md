@@ -37,6 +37,7 @@ Deviations recorded while executing this plan; the code is the reference where t
 - `pyproject.toml` sets `fallback-version = "0.0.0"` for hatch-vcs, and a stub README exists from Task 1 because hatchling requires it.
 - Unknown commands are rejected with `only zfs commands and syncoid's probes are allowed`.
 - Commit steps stage files by name: a local hook blocks `git add -A`.
+- Agent guidelines live in a single `AGENTS.md`; the `CLAUDE.md` and `GEMINI.md` files from Task 9 were dropped at the owner's request.
 - Scope change after the first full implementation, decided by the owner: grace-period holds (Task 5, `sweep.py`, the sweep timer, deferred `destroy -d`, `%` ranges) were removed because they were not an owner requirement, and `zfs zone` was added: `src/zfs_tenant/zone.py` (holder process run as root by `zfs-tenant zone`, `setns` plus capability drop in the gate via `--zone-pid-file`), `zoned=on` in setup, a `zfs-tenant-zone-<name>` unit in the host module, and zone subtests in the VM test. See the spec's zone.py section for the verified semantics.
 
 ## File Map
