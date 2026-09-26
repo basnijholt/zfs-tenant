@@ -238,7 +238,7 @@ curl -L -o /mnt/tank/admin/zfs-tenant.pyz \
 Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` where that is possible.
 
 1. Create a local user for Joe with a normal login shell such as bash, no password, and no extra groups. sshd runs forced commands through the login shell. On TrueNAS, give the user a home directory on a pool dataset so its `authorized_keys` persists.
-2. Look at what setup will do, then run it as root:
+2. Preview the initial setup commands, then run setup as root:
 
    ```bash
    python3 zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T --dry-run
@@ -246,6 +246,7 @@ Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` wher
    ```
 
    Delegation and properties live in the pool, so they survive reboots and appliance updates.
+   On subsequent runs, setup checks the root's mountpoint and skips resetting it when it is already locally set to `none`; OpenZFS rejects even an unchanged mountpoint write once zoned children inherit it.
 3. Produce the `authorized_keys` line and put it in that user's `~/.ssh/authorized_keys`:
 
    ```bash
@@ -282,7 +283,7 @@ syncoid --no-privilege-elevation --no-sync-snap --sendoptions=w --compress=none 
 - `--compress=none`: raw encrypted data does not compress. The gate reports that `lzop` and `mbuffer` are missing on its side anyway, so syncoid skips them.
 - `--delete-target-snapshots`: mirror your sanoid retention on the host.
 
-The receive always runs with `-u` and never with `-F`; the gate drops `-F` because nothing under a tenant root can be mounted or modified between receives.
+The receive always runs with `-u` and preserves `-F` when the caller requests it, as syncoid does. This lets ZFS roll back the receiving dataset and remove newer destination snapshots when retention has deleted the newest shared snapshot on the sender but an older common snapshot remains. Without `-F`, such an incremental receive fails even when the host never mounted or modified the backup. Forced receives are limited to datasets strictly below the tenant root and use the existing delegation; omitting `-F` keeps the normal refusal to overwrite divergent receiver state. Keep snapshots you want to preserve on the sender: the destination follows its state and retention, including after missed pushes. If no common snapshot remains, the dataset needs a new full backup.
 Run syncoid as a non-root user with `zfs allow -u <user> send,hold <dataset>` on the sending side.
 
 <!-- SECTION:syncoid-by-hand:END -->
@@ -336,7 +337,7 @@ ssh joe@bas-nas zfs destroy tank/friends/joe/offsite@autosnap_2026-01-01_00:00:0
 | `command -v NAME` | nothing (exit 1: "not installed") |
 | `zpool get -o value -H feature@extensible_dataset POOL` | same, only for the root's pool |
 | `zfs get -H name D`, `zfs get -H receive_resume_token D`, `zfs get -H -p used D`, `zfs get -Hpd 1 -t snapshot guid,creation D`, `zfs get -Hpd 1 type,guid,creation D` | same |
-| `zfs receive [-s] [-F] [-u] D↓` | `zfs receive -u [-s] D↓`, then the encryption check |
+| `zfs receive [-s] [-F] [-u] D↓` | `zfs receive -u [-s] [-F] D↓`, then the encryption check |
 | `zfs receive -A D↓` | same |
 | `zfs destroy [-r] D↓@S[,S...]` | same |
 | `zfs destroy D↓@a; zfs destroy D↓@b` (syncoid's chain) | one `zfs destroy D↓@a,b` |

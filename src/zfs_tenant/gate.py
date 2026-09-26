@@ -116,6 +116,8 @@ def _receive(request: grammar.Receive, config: GateConfig, fx: Effects) -> int:
     argv = [config.zfs, "receive", "-u"]
     if request.resumable:
         argv.append("-s")
+    if request.force:
+        argv.append("-F")
     argv.append(request.dataset)
     status = fx.spawner(argv, merge_stderr=True)
     if status != 0 or not config.require_encryption:

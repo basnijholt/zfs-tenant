@@ -95,4 +95,12 @@ def apply(spec: TenantSpec, *, zfs_path: str, zpool_path: str, runner: Runner) -
         )
         raise SetupError(msg)
     for args in commands(spec):
+        if args[0] == "set":
+            # Even a no-op mountpoint write fails once zoned children inherit it.
+            # Keep a local value so a later ancestor change cannot affect the root.
+            mountpoint = runner(
+                [zfs_path, "get", "-H", "-o", "value,source", "mountpoint", spec.root]
+            ).strip()
+            if mountpoint == "none\tlocal":
+                args.remove("mountpoint=none")
         runner([zfs_path, *args])

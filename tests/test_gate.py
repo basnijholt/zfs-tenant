@@ -93,6 +93,12 @@ def test_zpool_probe_uses_zpool_path() -> None:
 def test_encrypted_receive_succeeds() -> None:
     fake = Fake(outputs={LIST_ENCRYPTION: [MISSING, f"{DS}\taes-256-gcm\n"]})
     assert gate.handle(f"  zfs receive  -s -F '{DS}' 2>&1", CONFIG, fake.effects()) == 0
+    assert fake.spawns == [((ZFS, "receive", "-u", "-s", "-F", DS), True)]
+
+
+def test_receive_without_force_does_not_request_rollback() -> None:
+    fake = Fake(outputs={LIST_ENCRYPTION: [MISSING, f"{DS}\taes-256-gcm\n"]})
+    assert gate.handle(f"zfs receive -s {DS}", CONFIG, fake.effects()) == 0
     assert fake.spawns == [((ZFS, "receive", "-u", "-s", DS), True)]
 
 

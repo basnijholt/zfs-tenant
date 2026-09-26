@@ -38,6 +38,7 @@ class Receive:
 
     dataset: str
     resumable: bool
+    force: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,7 +192,7 @@ def _receive(args: list[str], root: str) -> Request | Rejected:
         return Run("zfs", ("receive", "-A", dataset))
     if not set(flags) <= {"-s", "-F", "-u"} or len(set(flags)) != len(flags):
         return Rejected("zfs receive only accepts -s, -F, -u, or -A")
-    return Receive(dataset=dataset, resumable="-s" in flags)
+    return Receive(dataset=dataset, resumable="-s" in flags, force="-F" in flags)
 
 
 def _destroy(args: list[str], root: str) -> Request | Rejected:

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from zfs_tenant import setup
+from zfs_tenant import setup, zfs
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -52,14 +52,19 @@ def test_reservation_is_applied() -> None:
 
 
 class Recorder:
-    def __init__(self, feature: str) -> None:
+    def __init__(self, feature: str, mountpoint: str = "/tank/friends/joe\tdefault") -> None:
         self.feature = feature
+        self.mountpoint = mountpoint
         self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, argv: Sequence[str]) -> str:
         self.calls.append(tuple(argv))
         if argv[0] == "/sbin/zpool":
             return self.feature + "\n"
+        if argv[1] == "get":
+            return self.mountpoint + "\n"
+        if argv[1] == "set" and "mountpoint=none" in argv and self.mountpoint == "none\tlocal":
+            raise zfs.CommandError(tuple(argv), 255, "child dataset is used in a non-global zone")
         return ""
 
 
@@ -75,7 +80,17 @@ def test_apply_checks_the_pool_feature_then_runs_every_command() -> None:
         "feature@filesystem_limits",
         "tank",
     )
-    assert recorder.calls[1:] == [("/sbin/zfs", *args) for args in setup.commands(SPEC)]
+    assert recorder.calls[2] == (
+        "/sbin/zfs",
+        "get",
+        "-H",
+        "-o",
+        "value,source",
+        "mountpoint",
+        "tank/friends/joe",
+    )
+    mutations = [call for call in recorder.calls[1:] if call[1] != "get"]
+    assert mutations == [("/sbin/zfs", *args) for args in setup.commands(SPEC)]
 
 
 def test_apply_refuses_a_pool_without_filesystem_limits() -> None:
@@ -83,6 +98,24 @@ def test_apply_refuses_a_pool_without_filesystem_limits() -> None:
     with pytest.raises(setup.SetupError, match="feature@filesystem_limits"):
         setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
     assert len(recorder.calls) == 1
+
+
+def test_apply_preserves_an_already_local_mountpoint_on_a_populated_root() -> None:
+    recorder = Recorder("active", mountpoint="none\tlocal")
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    setting = next(call for call in recorder.calls if call[1] == "set")
+    assert "mountpoint=none" not in setting
+    assert "quota=2T" in setting
+    assert "zoned=on" in setting
+    assert any(call[1] == "allow" for call in recorder.calls)
+
+
+@pytest.mark.parametrize("mountpoint", ["/old\tlocal", "none\tinherited from tank/friends"])
+def test_apply_enforces_a_local_mountpoint_when_not_already_configured(mountpoint: str) -> None:
+    recorder = Recorder("active", mountpoint=mountpoint)
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    setting = next(call for call in recorder.calls if call[1] == "set")
+    assert "mountpoint=none" in setting
 
 
 @pytest.mark.parametrize(
