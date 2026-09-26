@@ -17,7 +17,7 @@ icon: lucide/shield-check
 | ...even if the gate had a bug | everything runs inside Joe's zone, where the kernel hides every dataset that is not his; with `zoned=on`, his delegated rights only work from inside that zone |
 | Joe cannot store more than you agreed | `quota` on the root, set by root |
 | Joe cannot flood you with datasets or snapshots | `filesystem_limit` and `snapshot_limit`, which OpenZFS enforces for exactly this kind of delegated user |
-| You cannot read Joe's data | raw sends from Joe's side; the gate fails any push that arrives unencrypted and destroys what it created, which exposes a misconfigured sender but cannot unsend the plaintext |
+| You cannot read Joe's data | raw sends from Joe's side; after a successful receive, the gate destroys any new unencrypted dataset and fails the push (an interrupted receive skips that cleanup), which exposes a misconfigured sender but cannot unsend the plaintext |
 | Nothing of Joe's ever gets mounted or shared on your machine | `zoned=on` (the host never mounts zoned datasets, so it never shares them), plus `mountpoint=none`, `canmount=off`, `readonly=on`, `exec=off`, `setuid=off`, `devices=off`, `volmode=none` on the root; the gate always receives with `-u`; property overrides inside a stream fail with `permission denied` |
 | Joe's key cannot run anything else | the forced command; the gate never uses a shell |
 

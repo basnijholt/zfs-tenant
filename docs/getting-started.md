@@ -87,7 +87,7 @@ sudo -u syncoid ssh-keygen -t ed25519 -N '' -f /var/lib/syncoid/id_ed25519
 
 The source dataset (`tank/offsite` here) must be encrypted, and sanoid should snapshot it: with `--no-sync-snap`, syncoid only sends the snapshots sanoid made.
 A failed push shows up in `systemctl status syncoid-tank-offsite`.
-To get alerted, monitor the age of the newest snapshot that reached the host (`zfs list -r -t snapshot -o name,creation -s creation` through the gate), which also catches a timer that never runs.
+To get alerted, monitor the age of the newest snapshot that reached the host for each dataset you push (`zfs list -r -t snapshot -o name,creation -s creation` through the gate), so one healthy dataset cannot hide another that stopped replicating; this also catches a timer that never runs.
 
 On the tailnet, allow only Joe's node to reach port 22 on your host.
 

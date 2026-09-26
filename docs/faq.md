@@ -17,7 +17,8 @@ The old VM setup existed only because TrueNAS replication needed root on the rec
 
 **Why a holder service?**
 In OpenZFS 2.4, `zfs zone` attaches a dataset to one running namespace, so something has to keep that namespace alive.
-OpenZFS master can attach datasets to a uid instead (`zoned_uid`); once that is released, the holder can go.
+OpenZFS master can attach datasets to a uid instead (`zoned_uid`).
+Once that is released, it may replace the holder, after checking that its permission and capability rules still leave `zfs allow` in charge.
 
 **Why not zrepl?**
 zrepl's sink mode does per-client subtrees, but it replaces sanoid and syncoid on both sides and runs as root on the receiver.

@@ -86,7 +86,7 @@ The kernel is the jail; the gate removes the shell.
 2. **Delegation.** On the root itself, Joe's local user may only create and receive children. Below it, he may also destroy and send. OpenZFS checks these rights in the kernel on every operation, whatever program asks.
 3. **The gate.** Joe's SSH key is pinned to `zfs-tenant gate` with `restrict,from=...,command=...` in `authorized_keys`. The gate parses the requested command, accepts only the forms syncoid and a restore need, checks that every dataset is inside Joe's root, and runs `zfs` with an argument list it builds itself. It never starts a shell.
 4. **The zone.** A small service keeps a Linux user namespace alive for Joe, in which his uid maps to itself, and `zfs zone` attaches his root to it with `zoned=on`. The gate joins that namespace before it does anything, and the ZFS kernel module then answers `dataset does not exist` for every dataset that is not Joe's. Joe keeps his own uid in there, so he holds no capabilities and `zfs allow` still decides what he may change. If the service is down, the gate refuses to run.
-5. **Raw sends.** Joe sends with `zfs send -w`, so his blocks arrive still encrypted with his key. That is what keeps his data private. As a check on the sender's configuration, the gate refuses to receive into an existing unencrypted dataset, and after a receive succeeds it destroys any new dataset that arrived unencrypted and fails the push. This makes a misconfigured sender visible, but it cannot undo the disclosure: the plaintext has already reached your disk.
+5. **Raw sends.** Joe sends with `zfs send -w`, so his blocks arrive still encrypted with his key. That is what keeps his data private. As a check on the sender's configuration, the gate refuses to receive into an existing unencrypted dataset, and after a receive succeeds it destroys any new dataset that arrived unencrypted and fails the push. An interrupted receive skips that cleanup and can leave partial plaintext behind. This makes a misconfigured sender visible, but it cannot undo the disclosure: the plaintext has already reached your disk.
 
 <!-- SECTION:how-it-works:END -->
 
@@ -102,7 +102,7 @@ The kernel is the jail; the gate removes the shell.
 | ...even if the gate had a bug | everything runs inside Joe's zone, where the kernel hides every dataset that is not his; with `zoned=on`, his delegated rights only work from inside that zone |
 | Joe cannot store more than you agreed | `quota` on the root, set by root |
 | Joe cannot flood you with datasets or snapshots | `filesystem_limit` and `snapshot_limit`, which OpenZFS enforces for exactly this kind of delegated user |
-| You cannot read Joe's data | raw sends from Joe's side; the gate fails any push that arrives unencrypted and destroys what it created, which exposes a misconfigured sender but cannot unsend the plaintext |
+| You cannot read Joe's data | raw sends from Joe's side; after a successful receive, the gate destroys any new unencrypted dataset and fails the push (an interrupted receive skips that cleanup), which exposes a misconfigured sender but cannot unsend the plaintext |
 | Nothing of Joe's ever gets mounted or shared on your machine | `zoned=on` (the host never mounts zoned datasets, so it never shares them), plus `mountpoint=none`, `canmount=off`, `readonly=on`, `exec=off`, `setuid=off`, `devices=off`, `volmode=none` on the root; the gate always receives with `-u`; property overrides inside a stream fail with `permission denied` |
 | Joe's key cannot run anything else | the forced command; the gate never uses a shell |
 
@@ -217,7 +217,7 @@ sudo -u syncoid ssh-keygen -t ed25519 -N '' -f /var/lib/syncoid/id_ed25519
 
 The source dataset (`tank/offsite` here) must be encrypted, and sanoid should snapshot it: with `--no-sync-snap`, syncoid only sends the snapshots sanoid made.
 A failed push shows up in `systemctl status syncoid-tank-offsite`.
-To get alerted, monitor the age of the newest snapshot that reached the host (`zfs list -r -t snapshot -o name,creation -s creation` through the gate), which also catches a timer that never runs.
+To get alerted, monitor the age of the newest snapshot that reached the host for each dataset you push (`zfs list -r -t snapshot -o name,creation -s creation` through the gate), so one healthy dataset cannot hide another that stopped replicating; this also catches a timer that never runs.
 
 On the tailnet, allow only Joe's node to reach port 22 on your host.
 
@@ -363,7 +363,8 @@ The old VM setup existed only because TrueNAS replication needed root on the rec
 
 **Why a holder service?**
 In OpenZFS 2.4, `zfs zone` attaches a dataset to one running namespace, so something has to keep that namespace alive.
-OpenZFS master can attach datasets to a uid instead (`zoned_uid`); once that is released, the holder can go.
+OpenZFS master can attach datasets to a uid instead (`zoned_uid`).
+Once that is released, it may replace the holder, after checking that its permission and capability rules still leave `zfs allow` in charge.
 
 **Why not zrepl?**
 zrepl's sink mode does per-client subtrees, but it replaces sanoid and syncoid on both sides and runs as root on the receiver.
