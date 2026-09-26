@@ -23,6 +23,8 @@ Give a friend a quota-capped corner of your ZFS pool for their encrypted backups
 - [Why](#why)
 - [How it works](#how-it-works)
 - [Security model](#security-model)
+  - [What it cannot hide](#what-it-cannot-hide)
+  - [Residual risks](#residual-risks)
 - [Quick start on NixOS](#quick-start-on-nixos)
 - [Manual setup (TrueNAS SCALE or any Linux)](#manual-setup-truenas-scale-or-any-linux)
 - [Pushing with syncoid by hand](#pushing-with-syncoid-by-hand)
