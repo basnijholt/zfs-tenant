@@ -19,7 +19,7 @@ Requirements, in the friends' words:
 
 Additional constraints discovered during design:
 
-- Joe's NAS still runs TrueNAS SCALE, so the host side must work without NixOS: the gate uses the Python standard library only and ships as a single-file `zfs-tenant.pyz` release asset alongside the PyPI package.
+- One friend's NAS still runs TrueNAS SCALE, so the host side must work without NixOS: the gate uses the Python standard library only and ships as a single-file `zfs-tenant.pyz` release asset alongside the PyPI package.
 - Everything else in both fleets is NixOS, so a NixOS module is the primary setup path.
 
 ## Non-goals
