@@ -50,7 +50,7 @@ Residual risks, documented in the README:
 
 - The kernel parses tenant-supplied send streams.
 - The host always sees tenant metadata (non-goal above).
-- A leaked tenant key can push data up to the quota and delete non-held snapshots.
+- A leaked tenant key can push data up to the quota and delete that tenant's backups.
 - syncoid 2.3.0 pastes the receiver's resume token unescaped into a shell on the sender (`open FH, "$getsendsizecmd 2>&1 |"` with `$snaps = "-t $receivetoken"`), so a malicious host can run commands on the sender as the syncoid user. The sender module therefore runs syncoid as a non-root user that holds only `zfs send` and `hold` rights.
 
 ## Architecture
