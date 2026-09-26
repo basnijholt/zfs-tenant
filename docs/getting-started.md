@@ -44,7 +44,10 @@ services.zfs-tenant = {
 ```
 
 This creates the user `zfs-tenant-joe`, pins the key to the gate, applies the dataset, properties, and delegation on every boot, and runs `zfs-tenant-zone-joe.service`, which holds Joe's zone.
-The host needs OpenZFS 2.2 or newer for `zfs zone`.
+Each tenant needs a distinct, dedicated account with no other SSH keys, services, sudo rights, or password login. The module requires SSH PAM sessions and starts each forced command in a user scope under `zfs-tenant-joe.slice`. By default, that slice has `MemoryMax=512M`, `TasksMax=64`, and `CPUQuota=100%`; PAM sets a hard and soft `nproc` limit of 128 for the account. Adjust these with `tenants.joe.resourceLimits.memoryMax`, `tasksMax`, `cpuQuota`, and `processLimit` if needed. Keep the installed package and its path parents, receiver key files, and namespace pid file controlled by root.
+
+The host needs `zfs zone` support and a patched **loaded OpenZFS kernel module**. The [OpenZFS security advisory for CVE-2026-79619](https://github.com/openzfs/zfs/security/advisories/GHSA-mhf5-q8gw-qg9v) lists fixed upstream releases 2.4.4, 2.3.9, and 2.2.11; for vendor backports, confirm the fix with the vendor. Check the loaded version with `cat /sys/module/zfs/version`; an updated `zfs` tool alone does not update the loaded kernel module.
+Setup audits the root and its descendants before changing an existing tree and rejects unexpected delegation. If it fails, inspect `zfs allow -r tank/friends/joe`, remove unsafe grants explicitly as the administrator, and rerun setup. It does not silently revoke unrelated grants.
 Set `reservation = "2T";` as well if you want to guarantee Joe the space and hide how full your pool is.
 
 Joe needs nothing from zfs-tenant: he pushes with nixpkgs' own `services.syncoid`.
@@ -110,21 +113,21 @@ curl -L -o /mnt/tank/admin/zfs-tenant.pyz \
 
 Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` where that is possible.
 
-1. Create a local user for Joe with a normal login shell such as bash, no password, and no extra groups. sshd runs forced commands through the login shell. On TrueNAS, give the user a home directory on a pool dataset so its `authorized_keys` persists.
+1. Create a dedicated local user for Joe with a normal login shell such as bash, no password login, no extra groups or sudo rights, no other SSH keys, and no other services running as that user. sshd runs forced commands through the login shell. On TrueNAS, give the user a home directory on a pool dataset so its `authorized_keys` persists. Keep the zipapp, every parent directory in its path, the receiver's `authorized_keys` and its parent directories, and the namespace pid file and its parent directory root-owned and unwritable by Joe.
 2. Preview the initial setup commands, then run setup as root:
 
    ```bash
-   python3 zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T --dry-run
-   sudo python3 zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T
+   python3 -I zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T --dry-run
+   sudo python3 -I zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T
    ```
 
-   Delegation and properties live in the pool, so they survive reboots and appliance updates.
+   Delegation and properties live in the pool, so they survive reboots and appliance updates. Setup rejects any unexpected grants on an existing tenant root or its descendants and checks a new root for grants copied from its parent. If it rejects a tree, inspect `zfs allow -r tank/friends/joe`, remove unsafe grants yourself, and rerun setup; it will not silently revoke them.
    On subsequent runs, setup checks the root's mountpoint and skips resetting it when it is already locally set to `none`; OpenZFS rejects even an unchanged mountpoint write once zoned children inherit it.
 3. Produce the `authorized_keys` line and put it in that user's `~/.ssh/authorized_keys`:
 
    ```bash
-   python3 zfs-tenant.pyz authorized-key \
-     --gate-command "/usr/bin/python3 /mnt/tank/admin/zfs-tenant.pyz gate --root tank/friends/joe --zfs /usr/sbin/zfs --zpool /usr/sbin/zpool --zone-pid-file /run/zfs-tenant-joe.pid" \
+   python3 -I zfs-tenant.pyz authorized-key \
+     --gate-command "/usr/bin/python3 -I /mnt/tank/admin/zfs-tenant.pyz gate --root tank/friends/joe --zfs /usr/sbin/zfs --zpool /usr/sbin/zpool --zone-pid-file /run/zfs-tenant-joe.pid" \
      --from 100.64.0.12 \
      ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... joe-nas
    ```
@@ -132,10 +135,10 @@ Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` wher
 4. Start Joe's zone at boot, as root. On TrueNAS, add this as a post-init script:
 
    ```bash
-   nohup python3 /mnt/tank/admin/zfs-tenant.pyz zone --root tank/friends/joe --user joe \
+   nohup python3 -I /mnt/tank/admin/zfs-tenant.pyz zone --root tank/friends/joe --user joe \
      --pid-file /run/zfs-tenant-joe.pid --zfs /usr/sbin/zfs >/var/log/zfs-tenant-joe.log 2>&1 &
    ```
 
-   `setup` sets `zoned=on`, and the gate command above refuses to run until this holder is up. The kernel must allow unprivileged user namespaces (Debian and NixOS do by default).
+   `setup` sets `zoned=on`, and the gate command above refuses to run until this holder is up. The kernel must allow unprivileged user namespaces (Debian and NixOS do by default). Manual installation does not install the NixOS slice or PAM resource controls: arrange equivalent receiver limits yourself. Verify that the **loaded** OpenZFS module includes the fix described in the [upstream advisory](https://github.com/openzfs/zfs/security/advisories/GHSA-mhf5-q8gw-qg9v), or a vendor-confirmed backport.
 
 <!-- OUTPUT:END -->

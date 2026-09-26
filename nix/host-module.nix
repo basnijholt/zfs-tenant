@@ -12,11 +12,13 @@ let
   zfsBin = lib.getExe' cfg.zfsPackage "zfs";
   zpoolBin = lib.getExe' cfg.zfsPackage "zpool";
   tenantBin = lib.getExe cfg.package;
+  systemdRun = lib.getExe' pkgs.systemd "systemd-run";
 
   hasLineBreak = value: lib.hasInfix "\n" value || lib.hasInfix "\r" value;
   safeFromPattern = pattern: !hasLineBreak pattern && !lib.hasInfix "\"" pattern && !lib.hasInfix "," pattern;
   safeAuthorizedKey = key: !hasLineBreak key;
   safeTenantName = name: builtins.match "[a-z][a-z0-9-]{0,20}" name != null;
+  safeUserName = user: builtins.match "[a-z_][a-z0-9_-]{0,31}" user != null;
   safeDatasetName =
     dataset:
     builtins.match "[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)+" dataset != null
@@ -30,6 +32,14 @@ let
     name: tenant:
     lib.concatStringsSep " " (
       [
+        systemdRun
+        "--user"
+        "--scope"
+        "--quiet"
+        "--collect"
+        "--expand-environment=no"
+        "--slice=zfs-tenant-${name}.slice"
+        "--"
         tenantBin
         "gate"
         "--root"
@@ -49,6 +59,7 @@ let
     ''restrict,from="${lib.concatStringsSep "," tenant.allowedFrom}",command="${gateCommand name tenant}" ${key}'';
 
   roots = lib.mapAttrsToList (_: tenant: tenant.dataset) cfg.tenants;
+  tenantUsers = lib.mapAttrsToList (_: tenant: tenant.user) cfg.tenants;
   nestedRoots = lib.any (outer: lib.any (inner: lib.hasPrefix "${outer}/" inner) roots) roots;
 
   tenantModule =
@@ -94,6 +105,28 @@ let
           type = lib.types.bool;
           default = true;
           description = "Destroy newly received datasets that are not encrypted (tenants must send raw).";
+        };
+        resourceLimits = {
+          memoryMax = lib.mkOption {
+            type = lib.types.singleLineStr;
+            default = "512M";
+            description = "MemoryMax for this tenant's SSH gate user slice (systemd size syntax).";
+          };
+          tasksMax = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 64;
+            description = "TasksMax for this tenant's SSH gate user slice.";
+          };
+          cpuQuota = lib.mkOption {
+            type = lib.types.singleLineStr;
+            default = "100%";
+            description = "CPUQuota for this tenant's SSH gate user slice (systemd percent syntax).";
+          };
+          processLimit = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 128;
+            description = "Hard and soft PAM nproc limit for this tenant account.";
+          };
         };
         authorizedKeys = lib.mkOption {
           type = lib.types.listOf lib.types.singleLineStr;
@@ -141,6 +174,18 @@ in
         message = "services.zfs-tenant requires services.openssh.enable = true.";
       }
       {
+        assertion = config.services.openssh.settings.UsePAM == true;
+        message = "services.zfs-tenant requires services.openssh.settings.UsePAM = true for user scopes.";
+      }
+      {
+        assertion = config.security.pam.services.sshd.startSession or false;
+        message = "services.zfs-tenant requires security.pam.services.sshd.startSession = true for user scopes.";
+      }
+      {
+        assertion = lib.length tenantUsers == lib.length (lib.unique tenantUsers);
+        message = "services.zfs-tenant requires a distinct user for each tenant.";
+      }
+      {
         assertion = !nestedRoots && lib.length roots == lib.length (lib.unique roots);
         message = "services.zfs-tenant.tenants datasets must be distinct and must not contain each other.";
       }
@@ -154,6 +199,14 @@ in
         {
           assertion = safeDatasetName tenant.dataset;
           message = "services.zfs-tenant.tenants.${name}.dataset must be a safe dataset below a pool.";
+        }
+        {
+          assertion = safeUserName tenant.user;
+          message = "services.zfs-tenant.tenants.${name}.user must be a simple local user name.";
+        }
+        {
+          assertion = tenant.resourceLimits.memoryMax != "" && tenant.resourceLimits.cpuQuota != "";
+          message = "services.zfs-tenant.tenants.${name}.resourceLimits memoryMax and cpuQuota must be nonempty systemd values.";
         }
         {
           assertion = tenant.authorizedKeys != [ ] && lib.all safeAuthorizedKey tenant.authorizedKeys;
@@ -179,6 +232,28 @@ in
         # sshd runs the forced command through the login shell.
         shell = pkgs.runtimeShell;
         openssh.authorizedKeys.keys = map (forcedCommandKey name tenant) tenant.authorizedKeys;
+      }
+    ) cfg.tenants;
+
+    security.pam.loginLimits = lib.concatLists (lib.mapAttrsToList (
+      _: tenant:
+      map (type: {
+        domain = tenant.user;
+        inherit type;
+        item = "nproc";
+        value = toString tenant.resourceLimits.processLimit;
+      }) [ "soft" "hard" ]
+    ) cfg.tenants);
+
+    systemd.user.slices = lib.mapAttrs' (
+      name: tenant:
+      lib.nameValuePair "zfs-tenant-${name}" {
+        description = "SSH gate resource limits for zfs-tenant ${name}";
+        sliceConfig = {
+          MemoryMax = tenant.resourceLimits.memoryMax;
+          TasksMax = tenant.resourceLimits.tasksMax;
+          CPUQuota = tenant.resourceLimits.cpuQuota;
+        };
       }
     ) cfg.tenants;
 
