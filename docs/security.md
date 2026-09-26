@@ -17,7 +17,7 @@ icon: lucide/shield-check
 | ...even if the gate had a bug | everything runs inside Joe's zone, where the kernel hides every dataset that is not his; with `zoned=on`, his delegated rights only work from inside that zone |
 | Joe cannot store more than you agreed | `quota` on the root, set by root |
 | Joe cannot flood you with datasets or snapshots | `filesystem_limit` and `snapshot_limit`, which OpenZFS enforces for exactly this kind of delegated user |
-| You cannot read Joe's data | raw sends; the gate refuses unencrypted datasets |
+| You cannot read Joe's data | raw sends from Joe's side; the gate fails any push that arrives unencrypted and destroys what it created, which exposes a misconfigured sender but cannot unsend the plaintext |
 | Nothing of Joe's ever gets mounted or shared on your machine | `zoned=on` (the host never mounts zoned datasets, so it never shares them), plus `mountpoint=none`, `canmount=off`, `readonly=on`, `exec=off`, `setuid=off`, `devices=off`, `volmode=none` on the root; the gate always receives with `-u`; property overrides inside a stream fail with `permission denied` |
 | Joe's key cannot run anything else | the forced command; the gate never uses a shell |
 
@@ -53,7 +53,7 @@ You can always delete Joe's backup copy, even though you can never read it.
 - A leaked tenant key lets someone push data up to the quota and delete that tenant's backups.
 - Inside a zone, pool-level information (`zpool list`, `zpool status`) and the parent datasets' sizes are still visible to `zfs`. The gate does not allow those commands; the zone only matters if the gate is bypassed.
 - syncoid 2.3.0 pastes the resume token it gets from the receiving host into a shell on the sending machine without escaping it, so a malicious host could run commands on the sender as the user running syncoid.
-  The sender module therefore runs syncoid as a dedicated user that holds only `zfs send` and `hold` rights on the datasets it pushes.
-  If you push by hand, do the same.
+  So run syncoid as a dedicated user that holds only `send` and `hold` rights on the datasets it pushes.
+  The NixOS example below does this with `services.syncoid`; by hand, use `zfs allow -u <user> send,hold <dataset>`.
 
 <!-- OUTPUT:END -->

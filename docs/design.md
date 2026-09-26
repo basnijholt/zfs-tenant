@@ -23,7 +23,8 @@ The [security model](security.md) shows which mechanism enforces each goal and w
 
 - One host runs TrueNAS SCALE, so the host side must work without NixOS.
   The gate uses only the Python standard library and ships as a single `zfs-tenant.pyz` file.
-- Every other machine runs NixOS, so NixOS modules are the main setup path.
+- Every other machine runs NixOS, so a NixOS module is the main setup path on the host.
+  The sending side needs nothing from this project: nixpkgs' `services.syncoid` pushes as an unprivileged user.
 - The host runs OpenZFS 2.2 or newer, for `zfs zone`.
 
 ## Non-goals

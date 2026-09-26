@@ -21,8 +21,7 @@ src/zfs_tenant/
 └── zfs.py        # captured subprocess runner, CommandError
 nix/
 ├── host-module.nix       # services.zfs-tenant
-├── sender-module.nix     # services.zfs-tenant-sender
-├── integration-test.nix  # two-node VM test, real OpenZFS and syncoid
+├── integration-test.nix  # two-node VM test, real OpenZFS, sender on nixpkgs services.syncoid
 └── integration/          # throwaway SSH keys for the VM test only
 docs/                     # Zensical site, deployed to https://zfs-tenant.nijho.lt
 ```
@@ -36,7 +35,7 @@ docs/                     # Zensical site, deployed to https://zfs-tenant.nijho.
 5. **Encryption policy never destroys pre-existing data**: the gate refuses to receive into an existing unencrypted dataset and destroys only datasets that the current receive created unencrypted.
 6. **Zone with the tenant's own uid**: `zfs-tenant zone` (root) forks a holder that drops to the tenant user and creates a user namespace mapping that uid to itself, then `zfs zone`s the root to it and writes the holder's pid. The gate `setns()`es into it before parsing and fails closed when it cannot. Never map the tenant to root inside the namespace: ZFS treats namespace root as the zone administrator, which bypasses `zfs allow` (verified: it can destroy the tenant root).
 7. **Probes answer with nothing**: `command -v` exits 1 (so syncoid uses neither mbuffer nor compression on the host), `ps -Ao args=` prints nothing (a real `ps` would leak the host's process list).
-8. **Sender runs as non-root with `send,hold`**: `zfs send -I` takes temporary holds; syncoid 2.3.0 pastes the receiver's resume token into a local shell, so a root sender would trust the host with root.
+8. **Sender runs as non-root with `send,hold`**: `zfs send -I` takes temporary holds; syncoid 2.3.0 pastes the receiver's resume token into a local shell, so a root sender would trust the host with root. The README's sender example is nixpkgs `services.syncoid` with `localSourceAllow = [ "send" "hold" ]` (its default also grants `snapshot` and `destroy`); the VM test's sender node runs that same configuration, so change both together. This project ships no sender module.
 
 ## Development Commands
 

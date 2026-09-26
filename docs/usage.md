@@ -18,7 +18,7 @@ syncoid --no-privilege-elevation --no-sync-snap --sendoptions=w --compress=none 
 ```
 
 - `--no-privilege-elevation`: the gate refuses `sudo`.
-- `--sendoptions=w`: raw sends. The host never sees plaintext and the gate refuses anything else.
+- `--sendoptions=w`: raw sends, so the host never sees plaintext. The gate fails any push that arrives unencrypted.
 - `--no-sync-snap`: send sanoid's snapshots instead of creating syncoid's own, so the sending user needs only `send` and `hold`.
 - `--compress=none`: raw encrypted data does not compress. The gate reports that `lzop` and `mbuffer` are missing on its side anyway, so syncoid skips them.
 - `--delete-target-snapshots`: mirror your sanoid retention on the host.

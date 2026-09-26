@@ -48,15 +48,16 @@ Give a friend a quota-capped corner of your ZFS pool for their encrypted backups
 
 A friend with a ZFS box is the cheapest off-site backup there is: you store their snapshots, they store yours.
 The hard part is trust.
-Replication tools assume root on the receiving side, and nobody wants to hand a friend root on the machine that holds their family photos.
+Nobody wants to hand a friend root, or even a shell, on the machine that holds their family photos.
 
 A friend and I used to solve this [with a TrueNAS VM on top of an iSCSI zvol](https://www.nijho.lt/post/truenas-remote-backups/), so each of us could be root inside a disposable VM instead of on the real NAS.
 It worked, but it was a lot of machinery for what is really a permissions problem.
 
 OpenZFS already has the permission system: `zfs allow` can delegate `receive`, `create`, and `destroy` on one dataset to an unprivileged user, and a root-owned `quota` caps how much that user can store.
+syncoid already works with such a user (`--no-privilege-elevation`).
 What delegation alone does not do is stop that user from listing every dataset on your machine, or from running anything else once they can log in.
 zfs-tenant closes that gap twice: a forced command that only runs backup commands, and a user namespace that `zfs zone` restricts to the friend's own datasets.
-It also comes with the setup commands and NixOS modules that turn all of it into a few lines of config on both sides.
+It also comes with a setup command and a NixOS module that turn the host side into a few lines of config; the sending side is plain syncoid.
 
 <!-- SECTION:why:END -->
 
@@ -85,7 +86,7 @@ The kernel is the jail; the gate removes the shell.
 2. **Delegation.** On the root itself, Joe's local user may only create and receive children. Below it, he may also destroy and send. OpenZFS checks these rights in the kernel on every operation, whatever program asks.
 3. **The gate.** Joe's SSH key is pinned to `zfs-tenant gate` with `restrict,from=...,command=...` in `authorized_keys`. The gate parses the requested command, accepts only the forms syncoid and a restore need, checks that every dataset is inside Joe's root, and runs `zfs` with an argument list it builds itself. It never starts a shell.
 4. **The zone.** A small service keeps a Linux user namespace alive for Joe, in which his uid maps to itself, and `zfs zone` attaches his root to it with `zoned=on`. The gate joins that namespace before it does anything, and the ZFS kernel module then answers `dataset does not exist` for every dataset that is not Joe's. Joe keeps his own uid in there, so he holds no capabilities and `zfs allow` still decides what he may change. If the service is down, the gate refuses to run.
-5. **Raw sends.** Joe sends with `zfs send -w`, so his blocks arrive still encrypted with his key. The gate refuses and removes any newly received dataset that is not encrypted.
+5. **Raw sends.** Joe sends with `zfs send -w`, so his blocks arrive still encrypted with his key. That is what keeps his data private. As a check on the sender's configuration, the gate refuses to receive into an existing unencrypted dataset, and after a receive succeeds it destroys any new dataset that arrived unencrypted and fails the push. This makes a misconfigured sender visible, but it cannot undo the disclosure: the plaintext has already reached your disk.
 
 <!-- SECTION:how-it-works:END -->
 
@@ -101,7 +102,7 @@ The kernel is the jail; the gate removes the shell.
 | ...even if the gate had a bug | everything runs inside Joe's zone, where the kernel hides every dataset that is not his; with `zoned=on`, his delegated rights only work from inside that zone |
 | Joe cannot store more than you agreed | `quota` on the root, set by root |
 | Joe cannot flood you with datasets or snapshots | `filesystem_limit` and `snapshot_limit`, which OpenZFS enforces for exactly this kind of delegated user |
-| You cannot read Joe's data | raw sends; the gate refuses unencrypted datasets |
+| You cannot read Joe's data | raw sends from Joe's side; the gate fails any push that arrives unencrypted and destroys what it created, which exposes a misconfigured sender but cannot unsend the plaintext |
 | Nothing of Joe's ever gets mounted or shared on your machine | `zoned=on` (the host never mounts zoned datasets, so it never shares them), plus `mountpoint=none`, `canmount=off`, `readonly=on`, `exec=off`, `setuid=off`, `devices=off`, `volmode=none` on the root; the gate always receives with `-u`; property overrides inside a stream fail with `permission denied` |
 | Joe's key cannot run anything else | the forced command; the gate never uses a shell |
 
@@ -131,8 +132,8 @@ You can always delete Joe's backup copy, even though you can never read it.
 - A leaked tenant key lets someone push data up to the quota and delete that tenant's backups.
 - Inside a zone, pool-level information (`zpool list`, `zpool status`) and the parent datasets' sizes are still visible to `zfs`. The gate does not allow those commands; the zone only matters if the gate is bypassed.
 - syncoid 2.3.0 pastes the resume token it gets from the receiving host into a shell on the sending machine without escaping it, so a malicious host could run commands on the sender as the user running syncoid.
-  The sender module therefore runs syncoid as a dedicated user that holds only `zfs send` and `hold` rights on the datasets it pushes.
-  If you push by hand, do the same.
+  So run syncoid as a dedicated user that holds only `send` and `hold` rights on the datasets it pushes.
+  The NixOS example below does this with `services.syncoid`; by hand, use `zfs allow -u <user> send,hold <dataset>`.
 
 <!-- SECTION:residual-risks:END -->
 
@@ -140,7 +141,7 @@ You can always delete Joe's backup copy, even though you can never read it.
 
 ## Quick start on NixOS
 
-Add the flake:
+Add the flake to the host:
 
 ```nix
 {
@@ -150,8 +151,7 @@ Add the flake:
     nixosConfigurations.nas = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        zfs-tenant.nixosModules.host    # to give friends space
-        zfs-tenant.nixosModules.sender  # to push your own backups
+        zfs-tenant.nixosModules.host
         ./configuration.nix
       ];
     };
@@ -177,29 +177,47 @@ This creates the user `zfs-tenant-joe`, pins the key to the gate, applies the da
 The host needs OpenZFS 2.2 or newer for `zfs zone`.
 Set `reservation = "2T";` as well if you want to guarantee Joe the space and hide how full your pool is.
 
-On Joe's side, push with syncoid:
+Joe needs nothing from zfs-tenant: he pushes with nixpkgs' own `services.syncoid`.
+The VM test runs this configuration, with only its host name, pool, and key changed:
 
 ```nix
-services.zfs-tenant-sender = {
+programs.ssh.knownHosts.bas-nas.publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...";
+
+services.syncoid = {
   enable = true;
-  targets.bas = {
-    host = "bas-nas";
-    user = "zfs-tenant-joe";
-    sshKey = "/var/lib/zfs-tenant-sender/id_ed25519";
-    knownHosts = "bas-nas ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...";
-    datasets."tank/offsite" = "tank/friends/joe/offsite";
-    onCalendar = "daily";
+  sshKey = "/var/lib/syncoid/id_ed25519";
+  # The default also grants snapshot, destroy, bookmark, and mount.
+  localSourceAllow = [
+    "send"
+    "hold"
+  ];
+  commonArgs = [
+    "--no-sync-snap"
+    "--compress=none"
+    "--delete-target-snapshots"
+    "--sshoption=StrictHostKeyChecking=yes"
+  ];
+  commands."tank/offsite" = {
+    target = "zfs-tenant-joe@bas-nas:tank/friends/joe/offsite";
+    recursive = true;
+    sendOptions = "w";
   };
 };
 ```
 
-Create the key once, readable only by the sender user, and send Joe's public half to the host:
+`services.syncoid` runs syncoid hourly as the unprivileged `syncoid` user in a sandbox, always passes `--no-privilege-elevation`, and grants `localSourceAllow` only for the duration of each run.
+*Pushing with syncoid by hand* explains the other flags.
+
+Create the key once, readable only by the `syncoid` user, and send Joe's public half to the host:
 
 ```bash
-sudo -u zfs-tenant-sender ssh-keygen -t ed25519 -N '' -f /var/lib/zfs-tenant-sender/id_ed25519
+sudo install -d -m 700 -o syncoid -g syncoid /var/lib/syncoid
+sudo -u syncoid ssh-keygen -t ed25519 -N '' -f /var/lib/syncoid/id_ed25519
 ```
 
-The source dataset (`tank/offsite` here) must be encrypted, and sanoid should snapshot it: the sender runs syncoid with `--no-sync-snap`, so it only sends the snapshots sanoid made.
+The source dataset (`tank/offsite` here) must be encrypted, and sanoid should snapshot it: with `--no-sync-snap`, syncoid only sends the snapshots sanoid made.
+A failed push shows up in `systemctl status syncoid-tank-offsite`.
+To get alerted, monitor the age of the newest snapshot that reached the host (`zfs list -r -t snapshot -o name,creation -s creation` through the gate), which also catches a timer that never runs.
 
 On the tailnet, allow only Joe's node to reach port 22 on your host.
 
@@ -259,7 +277,7 @@ syncoid --no-privilege-elevation --no-sync-snap --sendoptions=w --compress=none 
 ```
 
 - `--no-privilege-elevation`: the gate refuses `sudo`.
-- `--sendoptions=w`: raw sends. The host never sees plaintext and the gate refuses anything else.
+- `--sendoptions=w`: raw sends, so the host never sees plaintext. The gate fails any push that arrives unencrypted.
 - `--no-sync-snap`: send sanoid's snapshots instead of creating syncoid's own, so the sending user needs only `send` and `hold`.
 - `--compress=none`: raw encrypted data does not compress. The gate reports that `lzop` and `mbuffer` are missing on its side anyway, so syncoid skips them.
 - `--delete-target-snapshots`: mirror your sanoid retention on the host.

@@ -43,7 +43,6 @@
           inherit system;
           modules = [
             self.nixosModules.host
-            self.nixosModules.sender
             {
               system.stateVersion = "26.05";
               boot.loader.grub.enable = false;
@@ -67,16 +66,6 @@
             allowedFrom = [ "100.64.0.12" ];
           };
         };
-        services.zfs-tenant-sender = {
-          enable = true;
-          targets.bas = {
-            host = "bas-nas";
-            user = "zfs-tenant-joe";
-            sshKey = "/var/lib/zfs-tenant-sender/id_ed25519";
-            knownHosts = "bas-nas ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyHostKey";
-            datasets."tank/offsite" = "tank/friends/joe/offsite";
-          };
-        };
       };
 
       failedAssertions = eval: builtins.filter (a: !a.assertion) eval.config.assertions;
@@ -94,7 +83,6 @@
             imports = [ ./nix/host-module.nix ];
             services.zfs-tenant.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
-        sender = ./nix/sender-module.nix;
       };
 
       checks = forAllSystems (
@@ -126,7 +114,6 @@
             assert good.config.systemd.services ? zfs-tenant-setup-joe;
             assert good.config.systemd.services ? zfs-tenant-zone-joe;
             assert lib.hasInfix " --zone-pid-file /run/zfs-tenant/joe/holder.pid" keyLine;
-            assert good.config.systemd.services.zfs-tenant-push-bas.serviceConfig.User == "zfs-tenant-sender";
             pkgs.runCommand "zfs-tenant-module-check" { } "touch $out";
         }
         # End-to-end VM test against real OpenZFS and syncoid; KVM only on x86_64-linux in CI.
@@ -134,7 +121,6 @@
           integration = import ./nix/integration-test.nix {
             inherit pkgs;
             hostModule = self.nixosModules.host;
-            senderModule = self.nixosModules.sender;
           };
         }
       );

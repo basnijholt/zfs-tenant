@@ -1,10 +1,9 @@
-# Two NixOS VMs with real OpenZFS: `sender` pushes with real syncoid through real sshd into
+# Two NixOS VMs with real OpenZFS: `sender` pushes with nixpkgs' services.syncoid through real sshd into
 # the gate on `host`. Proves the grammar matches syncoid 2.3.0 and that the delegation,
 # the zone, the quota, and the encryption policy behave as the README promises.
 {
   pkgs,
   hostModule,
-  senderModule,
 }:
 let
   hostPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/host_key.pub);
@@ -57,23 +56,28 @@ pkgs.testers.runNixOSTest {
   nodes.sender =
     { ... }:
     {
-      imports = [
-        senderModule
-        zfsNode
-      ];
-      environment.etc."zfs-tenant-sender/id_ed25519" = {
-        source = ./integration/client_key;
-        mode = "0400";
-        user = "zfs-tenant-sender";
-      };
-      services.zfs-tenant-sender = {
+      imports = [ zfsNode ];
+      # The README's sender example, with this test's host name, pool, and host key.
+      programs.ssh.knownHosts.host.publicKey = hostPublicKey;
+
+      services.syncoid = {
         enable = true;
-        targets.host = {
-          host = "host";
-          user = "zfs-tenant-joe";
-          sshKey = "/etc/zfs-tenant-sender/id_ed25519";
-          knownHosts = "host ${hostPublicKey}";
-          datasets."src/offsite" = "tank/friends/joe/offsite";
+        sshKey = "/var/lib/syncoid/id_ed25519";
+        # The default also grants snapshot, destroy, bookmark, and mount.
+        localSourceAllow = [
+          "send"
+          "hold"
+        ];
+        commonArgs = [
+          "--no-sync-snap"
+          "--compress=none"
+          "--delete-target-snapshots"
+          "--sshoption=StrictHostKeyChecking=yes"
+        ];
+        commands."src/offsite" = {
+          target = "zfs-tenant-joe@host:tank/friends/joe/offsite";
+          recursive = true;
+          sendOptions = "w";
         };
       };
     };
@@ -82,9 +86,8 @@ pkgs.testers.runNixOSTest {
     import shlex
 
     gate = (
-        "timeout 120 ssh -T -i /etc/zfs-tenant-sender/id_ed25519 -o IdentitiesOnly=yes "
-        "-o BatchMode=yes -o UserKnownHostsFile=/etc/zfs-tenant-sender/host.known_hosts "
-        "-o StrictHostKeyChecking=yes zfs-tenant-joe@host"
+        "timeout 120 ssh -T -i /var/lib/syncoid/id_ed25519 -o IdentitiesOnly=yes "
+        "-o BatchMode=yes -o StrictHostKeyChecking=yes zfs-tenant-joe@host"
     )
 
     def via_gate(command):
@@ -106,9 +109,11 @@ pkgs.testers.runNixOSTest {
         return f"su zfs-tenant-joe -s /bin/sh -c {shlex.quote(inner)}"
 
     def push():
-        status, _ = sender.execute("systemctl start zfs-tenant-push-host.service")
-        if status != 0:
-            print(sender.execute("journalctl -u zfs-tenant-push-host.service --no-pager -n 100")[1])
+        # services.syncoid units are Type=simple: wait for the run to end, then check how it ended.
+        sender.execute("systemctl start --wait syncoid-src-offsite.service")
+        result = sender.succeed("systemctl show -P Result syncoid-src-offsite.service").strip()
+        if result != "success":
+            print(sender.execute("journalctl -u syncoid-src-offsite.service --no-pager -n 100")[1])
             print(host.execute("journalctl -t zfs-tenant --no-pager -n 60")[1])
             raise AssertionError("syncoid push failed; journals above")
 
@@ -134,7 +139,12 @@ pkgs.testers.runNixOSTest {
         sender.succeed("head -c 2M /dev/urandom > /src/offsite/photos/a.jpg")
         sender.succeed("head -c 4M /dev/urandom > /src/offsite/docs/b.pdf")
         sender.succeed("zfs snapshot -r src/offsite@autosnap_1")
-        sender.succeed("systemctl restart zfs-tenant-sender-delegate.service")
+        # The README's key setup; pushes run only when the test asks for them.
+        sender.succeed("install -d -m 700 -o syncoid -g syncoid /var/lib/syncoid")
+        sender.succeed(
+            "install -m 400 -o syncoid -g syncoid ${./integration/client_key} /var/lib/syncoid/id_ed25519"
+        )
+        sender.succeed("systemctl stop syncoid-src-offsite.timer")
 
     with subtest("setup locks down the tenant root and is idempotent"):
         props = host.succeed(
@@ -150,6 +160,23 @@ pkgs.testers.runNixOSTest {
         host.succeed("systemctl restart zfs-tenant-setup-joe.service")
         # Requires= restarts the zone with setup, giving it a fresh namespace.
         host.wait_until_succeeds(f"test -s {pid_file}")
+
+    with subtest("inside its zone the kernel still enforces delegation"):
+        # What a gate bug could reach: the tenant uid inside its namespace, no gate in between.
+        # Destroying the root runs first, while it has no children for zfs to complain about.
+        out = host.fail(as_tenant_in_zone("zfs destroy tank/friends/joe") + " 2>&1")
+        assert "permission denied" in out, out
+        host.succeed(as_tenant_in_zone("zfs create tank/friends/joe/zonetest"))
+        for command in [
+            "zfs snapshot tank/friends/joe@x",
+            "zfs set quota=none tank/friends/joe",
+            "zfs set filesystem_limit=none tank/friends/joe",
+            "zfs set mountpoint=/mnt tank/friends/joe/zonetest",
+            "zfs allow -u zfs-tenant-joe quota tank/friends/joe",
+        ]:
+            out = host.fail(as_tenant_in_zone(command) + " 2>&1")
+            assert "permission denied" in out, (command, out)
+        host.succeed(as_tenant_in_zone("zfs destroy tank/friends/joe/zonetest"))
 
     with subtest("syncoid pushes raw encrypted datasets through the gate"):
         push()
