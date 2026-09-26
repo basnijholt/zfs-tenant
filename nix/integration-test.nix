@@ -272,6 +272,84 @@ pkgs.testers.runNixOSTest {
         # Requires= restarts the zone with setup, giving it a fresh namespace.
         host.wait_until_succeeds(f"test -s {pid_file}")
 
+    with subtest("setup rejects unexpected everyone and descendant grants without revoking them"):
+        root = "tank/friends/joe"
+        host.succeed(f"zfs allow -e destroy {root}")
+        out = host.fail("systemctl restart zfs-tenant-setup-joe.service 2>&1")
+        assert "Job for" in out or "failed" in out, out
+        assert "everyone destroy" in " ".join(host.succeed(f"zfs allow {root}").split())
+        host.succeed(f"zfs unallow -e {root}")
+        host.succeed("systemctl restart zfs-tenant-setup-joe.service")
+        host.succeed("systemctl restart zfs-tenant-zone-joe.service")
+        host.wait_until_succeeds(f"test -s {pid_file}")
+        host.succeed(as_tenant_in_zone(f"zfs create {root}/guard-child"))
+        host.succeed(f"zfs allow -u zfs-tenant-joe destroy {root}/guard-child")
+        host.fail("systemctl restart zfs-tenant-setup-joe.service 2>&1")
+        assert "user zfs-tenant-joe destroy" in " ".join(
+            host.succeed(f"zfs allow {root}/guard-child").split()
+        )
+        host.succeed(f"zfs unallow -u zfs-tenant-joe {root}/guard-child")
+        host.succeed(f"zfs destroy {root}/guard-child")
+        host.succeed("systemctl restart zfs-tenant-setup-joe.service")
+        host.succeed("systemctl restart zfs-tenant-zone-joe.service")
+        host.wait_until_succeeds(f"test -s {pid_file}")
+
+    with subtest("setup rejects a copied parent create-time grant on a new root"):
+        host.succeed("zfs create tank/guard-parent")
+        host.succeed("zfs allow -c destroy tank/guard-parent")
+        out = host.fail(
+            "zfs-tenant setup --root tank/guard-parent/child --user zfs-tenant-joe "
+            "--quota 32M 2>&1"
+        )
+        assert "unexpected" in out, out
+        assert "Create time permissions: destroy" in " ".join(
+            host.succeed("zfs allow tank/guard-parent/child").split()
+        )
+        host.succeed("zfs destroy tank/guard-parent/child")
+        host.succeed("zfs unallow -c tank/guard-parent")
+        host.succeed("zfs destroy tank/guard-parent")
+
+    with subtest("the live SSH gate is bounded by its user slice"):
+        sender.succeed(
+            "(printf x; sleep 30) | " + via_gate("zfs receive -s tank/friends/joe/scope-probe")
+            + " >/tmp/scope-probe.log 2>&1 & echo $! >/tmp/scope-probe.pid"
+        )
+        uid = host.succeed("id -u zfs-tenant-joe").strip()
+        slice_path = (
+            f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/"
+            "zfs.slice/zfs-tenant.slice/zfs-tenant-joe.slice"
+        )
+        host.wait_until_succeeds(f"ls {slice_path}/*.scope/cgroup.procs")
+        scope_file = host.succeed(f"ls {slice_path}/*.scope/cgroup.procs").strip().splitlines()[0]
+        scope_pids = host.succeed(f"cat {scope_file}").split()
+        commands = {
+            pid: host.succeed(f"tr '\\0' ' ' </proc/{pid}/cmdline") for pid in scope_pids
+        }
+        gate_pids = [
+            pid for pid, command in commands.items()
+            if ".zfs-tenant-wrapped gate --root tank/friends/joe" in command
+        ]
+        assert gate_pids, commands
+        gate_pid = gate_pids[0]
+        assert host.succeed(f"awk '/^Uid:/ {{print $2}}' /proc/{gate_pid}/status").strip() == uid
+        cgroup = host.succeed(f"cut -d: -f3 /proc/{gate_pid}/cgroup").strip()
+        assert "/zfs-tenant-joe.slice/" in cgroup and cgroup.endswith(".scope"), cgroup
+        assert host.succeed(f"cat {slice_path}/memory.max").strip() == "536870912"
+        assert host.succeed(f"cat {slice_path}/pids.max").strip() == "64"
+        assert host.succeed(f"cat {slice_path}/cpu.max").strip() == "100000 100000"
+        before = int(host.succeed(f"awk '/^max / {{print $2}}' {slice_path}/pids.events"))
+        try:
+            current = host.succeed(f"cat {slice_path}/pids.current").strip()
+            host.succeed(f"sh -c 'echo {current} > {slice_path}/pids.max'")
+            sender.fail(ask_gate("zfs list -H -o name -r") + " 2>&1")
+            after = int(host.succeed(f"awk '/^max / {{print $2}}' {slice_path}/pids.events"))
+            assert after > before, (before, after)
+            assert host.succeed("cat /srv/host/secret").strip() == "host-secret"
+        finally:
+            host.succeed(f"sh -c 'echo 64 > {slice_path}/pids.max'")
+            sender.execute("kill $(cat /tmp/scope-probe.pid) 2>/dev/null || true")
+        assert "tank/friends/joe" in sender.succeed(ask_gate("zfs list -H -o name -r"))
+
     with subtest("inside its zone the kernel still enforces delegation"):
         # What a gate bug could reach: the tenant uid inside its namespace, no gate in between.
         # Destroying the root runs first, while it has no children for zfs to complain about.

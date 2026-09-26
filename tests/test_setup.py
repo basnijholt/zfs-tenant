@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,6 +13,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 SPEC = setup.TenantSpec(root="tank/friends/joe", user="zfs-tenant-joe", quota="2T")
+
+
+@pytest.fixture(autouse=True)
+def tenant_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "pwd.getpwnam", lambda _user: SimpleNamespace(pw_uid=1001, pw_name="zfs-tenant-joe")
+    )
 
 
 def test_commands_set_properties_and_delegate() -> None:
@@ -52,19 +60,72 @@ def test_reservation_is_applied() -> None:
 
 
 class Recorder:
-    def __init__(self, feature: str, mountpoint: str | None = "/tank/friends/joe\tdefault") -> None:
+    def __init__(
+        self,
+        feature: str,
+        mountpoint: str | None = "/tank/friends/joe\tdefault",
+        grants: dict[str, str] | None = None,
+        zoned_parent: str = "off",
+        display_user: str = "zfs-tenant-joe",
+    ) -> None:
         self.feature = feature
         self.mountpoint = mountpoint
+        self.grants = grants or {}
+        self.zoned_parent = zoned_parent
+        self.display_user = display_user
+        self.datasets = {"tank", "tank/friends"}
+        if mountpoint is not None:
+            self.datasets.add(SPEC.root)
         self.calls: list[tuple[str, ...]] = []
 
-    def __call__(self, argv: Sequence[str]) -> str:
+    def __call__(self, argv: Sequence[str]) -> str:  # noqa: C901, PLR0911, PLR0912 - test ZFS simulator
         self.calls.append(tuple(argv))
         if argv[0] == "/sbin/zpool":
             return self.feature + "\n"
+        if argv[1] == "list":
+            name = argv[-1]
+            if name not in self.datasets:
+                raise zfs.CommandError(tuple(argv), 1, "dataset does not exist")
+            if "-r" in argv:
+                return (
+                    "\n".join(
+                        sorted(d for d in self.datasets if d == name or d.startswith(name + "/"))
+                    )
+                    + "\n"
+                )
+            return name + "\n"
         if argv[1] == "get":
+            if "zoned" in argv:
+                return (self.zoned_parent if argv[-1] != SPEC.root else "on") + "\n"
             if self.mountpoint is None:
                 raise zfs.CommandError(tuple(argv), 1, "cannot open: dataset does not exist")
             return self.mountpoint + "\n"
+        if argv[1] == "allow" and len(argv) == 3:
+            name = argv[-1]
+            return "".join(
+                f"---- Permissions on {source} {'-' * 24}\n{self.grants[source]}"
+                for source in (
+                    "tank",
+                    "tank/friends",
+                    SPEC.root,
+                    *sorted(self.datasets - {"tank", "tank/friends", SPEC.root}),
+                )
+                if source in self.grants and (name == source or name.startswith(source + "/"))
+            )
+        if argv[1] == "create":
+            parts = argv[-1].split("/")
+            self.datasets.update("/".join(parts[:n]) for n in range(1, len(parts) + 1))
+        if argv[1] == "unallow":
+            self.grants.pop(SPEC.root, None)
+        if argv[1] == "allow" and "-l" in argv:
+            self.grants[SPEC.root] = (
+                f"Local permissions:\n\tuser {self.display_user} create,mount,receive\n"
+            )
+        if argv[1] == "allow" and "-d" in argv:
+            self.grants[SPEC.root] = (
+                f"Local+Descendent permissions:\n\tuser {self.display_user} create,mount,receive\n"
+                f"Descendent permissions:\n\tuser {self.display_user} destroy,send\n"
+            )
         if argv[1] == "set" and "mountpoint=none" in argv and self.mountpoint == "none\tlocal":
             raise zfs.CommandError(tuple(argv), 255, "child dataset is used in a non-global zone")
         return ""
@@ -82,16 +143,11 @@ def test_apply_checks_the_pool_feature_then_runs_every_command() -> None:
         "feature@filesystem_limits",
         "tank",
     )
-    assert recorder.calls[1] == (
-        "/sbin/zfs",
-        "get",
-        "-H",
-        "-o",
-        "value,source",
-        "mountpoint",
-        "tank/friends/joe",
-    )
-    mutations = [call for call in recorder.calls[1:] if call[1] != "get"]
+    mutations = [
+        call
+        for call in recorder.calls
+        if call[1] in {"create", "set", "unallow"} or (call[1] == "allow" and len(call) > 3)
+    ]
     assert mutations == [("/sbin/zfs", *args) for args in setup.commands(SPEC)]
 
 
@@ -132,6 +188,139 @@ def test_apply_enforces_a_local_mountpoint_when_not_already_configured(mountpoin
     setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
     setting = next(call for call in recorder.calls if call[1] == "set")
     assert "mountpoint=none" in setting
+
+
+@pytest.mark.parametrize(
+    ("grant", "reason"),
+    [
+        ("Local permissions:\n user zfs-tenant-joe destroy\n", "destroy"),
+        ("Local permissions:\n user another-user create\n", "another-user"),
+        ("Local permissions:\n group staff create\n", "group"),
+        ("Local permissions:\n everyone create\n", "everyone"),
+        ("Permission sets:\n @admin destroy\n", "Permission sets"),
+        ("Create time permissions:\n destroy\n", "Create time"),
+        ("Unexpected permissions:\n user zfs-tenant-joe create\n", "Unexpected"),
+        ("Local permissions:\n user zfs-tenant-joe\n", "malformed"),
+        ("Local permissions:\n", "empty"),
+        ("Local permissions:\nDescendent permissions:\n user zfs-tenant-joe send\n", "empty"),
+    ],
+)
+def test_existing_unsafe_root_is_rejected_before_mutation(grant: str, reason: str) -> None:
+    recorder = Recorder("active", grants={SPEC.root: grant})
+    with pytest.raises(setup.SetupError, match=reason):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert not any(
+        call[1] in {"create", "set", "unallow"} or (call[1] == "allow" and len(call) > 3)
+        for call in recorder.calls
+    )
+
+
+@pytest.mark.parametrize(
+    "grant",
+    [
+        "Local permissions:\n user 1001 create,mount,receive\n",
+        (
+            "Local permissions:\n user zfs-tenant-joe create,mount,receive\n"
+            "Descendent permissions:\n user zfs-tenant-joe create,destroy,mount,receive,send\n"
+        ),
+        (
+            "Local+Descendent permissions:\n user 1001 create,mount,receive\n"
+            "Descendent permissions:\n user 1001 destroy,send\n"
+        ),
+    ],
+)
+def test_own_existing_grants_are_safe_to_reapply(grant: str) -> None:
+    recorder = Recorder("active", grants={SPEC.root: grant})
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert any(call[1] == "set" for call in recorder.calls)
+
+
+def test_canonical_display_name_is_accepted_for_configured_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "pwd.getpwnam", lambda _user: SimpleNamespace(pw_uid=1001, pw_name="canonical-joe")
+    )
+    recorder = Recorder(
+        "active",
+        grants={SPEC.root: "Local permissions:\n user canonical-joe create\n"},
+        display_user="canonical-joe",
+    )
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert any(call[1] == "set" for call in recorder.calls)
+
+
+def test_direct_child_grant_is_rejected_before_mutation() -> None:
+    recorder = Recorder(
+        "active",
+        grants={"tank/friends/joe/data": "Local permissions:\n user zfs-tenant-joe create\n"},
+    )
+    recorder.datasets.add("tank/friends/joe/data")
+    with pytest.raises(setup.SetupError, match="tank/friends/joe/data"):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert not any(call[1] == "set" for call in recorder.calls)
+
+
+def test_direct_volume_grant_is_rejected_before_mutation() -> None:
+    recorder = Recorder(
+        "active", grants={"tank/friends/joe/disk": "Descendent permissions:\n user 1001 send\n"}
+    )
+    recorder.datasets.add("tank/friends/joe/disk")
+    with pytest.raises(setup.SetupError, match="tank/friends/joe/disk"):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert not any(call[1] == "set" for call in recorder.calls)
+
+
+def test_well_formed_ancestor_grant_is_ignored_across_unzoned_boundary() -> None:
+    recorder = Recorder(
+        "active", grants={"tank/friends": "Local+Descendent permissions:\n group staff destroy\n"}
+    )
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert any(call[1] == "set" for call in recorder.calls)
+
+
+def test_zoned_parent_rejected_before_mutation() -> None:
+    recorder = Recorder("active", zoned_parent="on")
+    with pytest.raises(setup.SetupError, match="zoned"):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert not any(call[1] == "set" for call in recorder.calls)
+
+
+def test_missing_root_walks_to_existing_unzoned_parent() -> None:
+    recorder = Recorder("active", mountpoint=None)
+    recorder.datasets.remove("tank/friends")
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert ("/sbin/zfs", "get", "-H", "-o", "value", "zoned", "tank") in recorder.calls
+    assert any(call[1] == "set" for call in recorder.calls)
+
+
+def test_parent_create_time_grant_copied_to_new_root_is_rejected_before_properties() -> None:
+    class CopyingRecorder(Recorder):
+        def __call__(self, argv: Sequence[str]) -> str:
+            result = super().__call__(argv)
+            if argv[1] == "create":
+                self.grants[SPEC.root] = "Local permissions:\n user creator destroy\n"
+            return result
+
+    recorder = CopyingRecorder("active", mountpoint=None)
+    with pytest.raises(setup.SetupError, match="creator"):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert any(call[1] == "create" for call in recorder.calls)
+    assert not any(call[1] in {"set", "unallow"} for call in recorder.calls)
+
+
+def test_final_verification_rejects_missing_grants() -> None:
+    class DroppingRecorder(Recorder):
+        def __call__(self, argv: Sequence[str]) -> str:
+            result = super().__call__(argv)
+            if argv[1] == "allow" and "-d" in argv:
+                self.grants.pop(SPEC.root, None)
+            return result
+
+    with pytest.raises(setup.SetupError, match="final"):
+        setup.apply(
+            SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=DroppingRecorder("active")
+        )
 
 
 @pytest.mark.parametrize(

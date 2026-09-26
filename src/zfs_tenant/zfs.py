@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable, Sequence
 
@@ -21,7 +22,9 @@ class CommandError(RuntimeError):
 
 def run(argv: Sequence[str]) -> str:
     """Run *argv* without a shell and return stdout; raise CommandError on failure."""
-    result = subprocess.run(list(argv), capture_output=True, text=True, check=False)  # noqa: S603 - argv is built by this package
+    result = subprocess.run(  # noqa: S603 - argv is built by this package
+        list(argv), capture_output=True, text=True, check=False, env={**os.environ, "LC_ALL": "C"}
+    )
     if result.returncode != 0:
         raise CommandError(argv, result.returncode, result.stderr)
     return result.stdout
