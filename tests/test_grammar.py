@@ -36,8 +36,8 @@ ACCEPTED = [
         zfs("get", "-Hpd", "1", "type,guid,creation", DS),
     ),
     (f"  zfs receive  -s -F '{DS}' 2>&1", Receive(DS, resumable=True, force=True)),
-    (f"  zfs receive  '{DS}' 2>&1", Receive(DS, resumable=False)),
-    (f"zfs receive -u {ROOT}/x", Receive(f"{ROOT}/x", resumable=False)),
+    (f"  zfs receive  '{DS}' 2>&1", Receive(DS, resumable=False, force=False)),
+    (f"zfs receive -u {ROOT}/x", Receive(f"{ROOT}/x", resumable=False, force=False)),
     (f"zfs receive -A '{DS}'", zfs("receive", "-A", DS)),
     (
         f" zfs destroy '{DS}'@autosnap_a,autosnap_b",

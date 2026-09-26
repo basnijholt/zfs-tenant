@@ -52,7 +52,7 @@ def test_reservation_is_applied() -> None:
 
 
 class Recorder:
-    def __init__(self, feature: str, mountpoint: str = "/tank/friends/joe\tdefault") -> None:
+    def __init__(self, feature: str, mountpoint: str | None = "/tank/friends/joe\tdefault") -> None:
         self.feature = feature
         self.mountpoint = mountpoint
         self.calls: list[tuple[str, ...]] = []
@@ -62,6 +62,8 @@ class Recorder:
         if argv[0] == "/sbin/zpool":
             return self.feature + "\n"
         if argv[1] == "get":
+            if self.mountpoint is None:
+                raise zfs.CommandError(tuple(argv), 1, "cannot open: dataset does not exist")
             return self.mountpoint + "\n"
         if argv[1] == "set" and "mountpoint=none" in argv and self.mountpoint == "none\tlocal":
             raise zfs.CommandError(tuple(argv), 255, "child dataset is used in a non-global zone")
@@ -80,7 +82,7 @@ def test_apply_checks_the_pool_feature_then_runs_every_command() -> None:
         "feature@filesystem_limits",
         "tank",
     )
-    assert recorder.calls[2] == (
+    assert recorder.calls[1] == (
         "/sbin/zfs",
         "get",
         "-H",
@@ -98,6 +100,20 @@ def test_apply_refuses_a_pool_without_filesystem_limits() -> None:
     with pytest.raises(setup.SetupError, match="feature@filesystem_limits"):
         setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
     assert len(recorder.calls) == 1
+
+
+def test_keep_mountpoint_drops_only_the_mountpoint_write() -> None:
+    kept = setup.commands(SPEC, keep_mountpoint=True)
+    assert "mountpoint=none" not in kept[1]
+    assert [arg for arg in setup.commands(SPEC)[1] if arg != "mountpoint=none"] == kept[1]
+    assert kept[2:] == setup.commands(SPEC)[2:]
+
+
+def test_apply_sets_the_mountpoint_on_a_new_root() -> None:
+    recorder = Recorder("active", mountpoint=None)
+    setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    setting = next(call for call in recorder.calls if call[1] == "set")
+    assert "mountpoint=none" in setting
 
 
 def test_apply_preserves_an_already_local_mountpoint_on_a_populated_root() -> None:

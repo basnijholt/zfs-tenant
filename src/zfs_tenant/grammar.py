@@ -38,7 +38,7 @@ class Receive:
 
     dataset: str
     resumable: bool
-    force: bool = False
+    force: bool
 
 
 @dataclass(frozen=True)

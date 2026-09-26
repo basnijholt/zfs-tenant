@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from zfs_tenant import names
+from zfs_tenant import names, zfs
 
 if TYPE_CHECKING:
     from zfs_tenant.zfs import Runner
@@ -63,14 +63,18 @@ def validate(spec: TenantSpec) -> None:
         raise SetupError(msg)
 
 
-def commands(spec: TenantSpec) -> list[list[str]]:
-    """Return the zfs argument lists that bring the tenant root to the desired state."""
+def commands(spec: TenantSpec, *, keep_mountpoint: bool = False) -> list[list[str]]:
+    """Return the zfs argument lists that bring the tenant root to the desired state.
+
+    With *keep_mountpoint*, leave out ``mountpoint=none``: once zoned children inherit it,
+    OpenZFS rejects even a write that changes nothing.
+    """
     properties = [
         f"quota={spec.quota}",
         f"reservation={spec.reservation or 'none'}",
         f"filesystem_limit={spec.filesystem_limit}",
         f"snapshot_limit={spec.snapshot_limit}",
-        *FIXED_PROPERTIES,
+        *(p for p in FIXED_PROPERTIES if not (keep_mountpoint and p == "mountpoint=none")),
     ]
     return [
         ["create", "-p", spec.root],
@@ -94,13 +98,16 @@ def apply(spec: TenantSpec, *, zfs_path: str, zpool_path: str, runner: Runner) -
             f"enable it with: zpool set feature@filesystem_limits=enabled {pool}"
         )
         raise SetupError(msg)
-    for args in commands(spec):
-        if args[0] == "set":
-            # Even a no-op mountpoint write fails once zoned children inherit it.
-            # Keep a local value so a later ancestor change cannot affect the root.
-            mountpoint = runner(
-                [zfs_path, "get", "-H", "-o", "value,source", "mountpoint", spec.root]
-            ).strip()
-            if mountpoint == "none\tlocal":
-                args.remove("mountpoint=none")
+    for args in commands(spec, keep_mountpoint=_mountpoint_is_local_none(spec, zfs_path, runner)):
         runner([zfs_path, *args])
+
+
+def _mountpoint_is_local_none(spec: TenantSpec, zfs_path: str, runner: Runner) -> bool:
+    # Only a local value counts: an inherited one would follow a later change to an ancestor.
+    try:
+        output = runner([zfs_path, "get", "-H", "-o", "value,source", "mountpoint", spec.root])
+    except zfs.CommandError as error:
+        if zfs.does_not_exist(error):
+            return False
+        raise
+    return output.strip() == "none\tlocal"

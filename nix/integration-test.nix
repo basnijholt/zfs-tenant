@@ -8,6 +8,11 @@
 let
   hostPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/host_key.pub);
   clientPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/client_key.pub);
+  # The reverse direction has its own keys, so a swapped host-key pin or key fails the test.
+  senderHostPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/sender_host_key.pub);
+  reverseClientPublicKey = pkgs.lib.strings.trim (
+    builtins.readFile ./integration/reverse_client_key.pub
+  );
   snapshotPolicy = {
     recursive = true;
     autosnap = true;
@@ -76,7 +81,7 @@ pkgs.testers.runNixOSTest {
         enable = true;
         datasets."tank/outgoing" = snapshotPolicy;
       };
-      programs.ssh.knownHosts.sender.publicKey = hostPublicKey;
+      programs.ssh.knownHosts.sender.publicKey = senderHostPublicKey;
       services.syncoid = {
         enable = true;
         sshKey = "/var/lib/syncoid/id_ed25519";
@@ -118,7 +123,7 @@ pkgs.testers.runNixOSTest {
         ];
       };
       environment.etc."ssh/ssh_host_ed25519_key" = {
-        source = ./integration/host_key;
+        source = ./integration/sender_host_key;
         mode = "0600";
       };
       services.zfs-tenant = {
@@ -126,7 +131,7 @@ pkgs.testers.runNixOSTest {
         tenants.bas = {
           dataset = "src/friends/bas";
           quota = "256M";
-          authorizedKeys = [ clientPublicKey ];
+          authorizedKeys = [ reverseClientPublicKey ];
           allowedFrom = [
             nodes.host.networking.primaryIPAddress
             nodes.host.networking.primaryIPv6Address
@@ -245,11 +250,12 @@ pkgs.testers.runNixOSTest {
         )
         host.succeed("zfs create tank/outgoing/photos && echo host-photo > /outgoing/photos/photo")
         # The README's key setup; pushes run only when the test asks for them.
-        for node in (host, sender):
+        for node, key in (
+            (host, "${./integration/reverse_client_key}"),
+            (sender, "${./integration/client_key}"),
+        ):
             node.succeed("install -d -m 700 -o syncoid -g syncoid /var/lib/syncoid")
-            node.succeed(
-                "install -m 400 -o syncoid -g syncoid ${./integration/client_key} /var/lib/syncoid/id_ed25519"
-            )
+            node.succeed(f"install -m 400 -o syncoid -g syncoid {key} /var/lib/syncoid/id_ed25519")
 
     with subtest("setup locks down the tenant root and is idempotent"):
         props = host.succeed(
