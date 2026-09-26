@@ -50,7 +50,7 @@ Residual risks, documented in the README:
 
 - The kernel parses tenant-supplied send streams.
 - The host always sees tenant metadata (non-goal above).
-- A leaked tenant key can push data up to the quota and delete non-held snapshots.
+- A leaked tenant key can push data up to the quota and delete that tenant's backups.
 - syncoid 2.3.0 pastes the receiver's resume token unescaped into a shell on the sender (`open FH, "$getsendsizecmd 2>&1 |"` with `$snaps = "-t $receivetoken"`), so a malicious host can run commands on the sender as the syncoid user. The sender module therefore runs syncoid as a non-root user that holds only `zfs send` and `hold` rights.
 
 ## Architecture
@@ -228,6 +228,6 @@ Runs syncoid as the system user `zfs-tenant-sender` with `zfs allow -u zfs-tenan
 
 ## Packaging and repository
 
-Mirrors `basnijholt/pytest-shm`: src layout, hatchling + hatch-vcs, uv, ruff (`ALL`), mypy strict, ty, prek/pre-commit, justfile, `CLAUDE.md` with `AGENTS.md`/`GEMINI.md` symlinks, animated `docs/logo.svg`, README with TOC.
+Mirrors `basnijholt/pytest-shm`: src layout, hatchling + hatch-vcs, uv, ruff (`ALL`), mypy strict, ty, prek/pre-commit, justfile, `AGENTS.md` for coding agents, animated `docs/logo.svg`, README with TOC.
 Workflows: CI (pytest 3.10-3.14, lint, Nix job with KVM running flake checks and the VM test), release (PyPI trusted publishing plus the `.pyz` asset built with `python -m zipapp`), release-drafter, TOC, renovate.
 Public repository `github.com/basnijholt/zfs-tenant`.
