@@ -428,6 +428,10 @@ def test_final_verification_rejects_missing_grants() -> None:
     "spec",
     [
         setup.TenantSpec(root="tank", user="u", quota="1T"),
+        setup.TenantSpec(root="", user="u", quota="1T"),
+        setup.TenantSpec(root="tank/", user="u", quota="1T"),
+        setup.TenantSpec(root="tank//x", user="u", quota="1T"),
+        setup.TenantSpec(root="tank/..", user="u", quota="1T"),
         setup.TenantSpec(root="tank/x y", user="u", quota="1T"),
         setup.TenantSpec(root="tank/x", user="u;id", quota="1T"),
         setup.TenantSpec(root="tank/x", user="u", quota="lots"),

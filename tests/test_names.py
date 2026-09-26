@@ -10,11 +10,18 @@ ROOT = "tank/friends/joe"
 
 
 @pytest.mark.parametrize(
-    "name",
-    ["tank", "tank/friends/joe", "tank/a.b:c-d_e", "tank/friends/joe/offsite/2026"],
+    ("name", "tenant_root"),
+    [
+        ("tank", False),
+        ("tank/friends/joe", True),
+        ("tank/a.b:c-d_e", True),
+        ("tank/friends/joe/offsite/2026", True),
+        ("tank/friends/joe2", True),
+    ],
 )
-def test_valid_datasets(name: str) -> None:
+def test_valid_datasets_and_tenant_roots(name: str, tenant_root: bool) -> None:
     assert names.is_dataset(name)
+    assert names.is_tenant_root(name) is tenant_root
 
 
 @pytest.mark.parametrize(
@@ -39,6 +46,7 @@ def test_valid_datasets(name: str) -> None:
 )
 def test_invalid_datasets(name: str) -> None:
     assert not names.is_dataset(name)
+    assert not names.is_tenant_root(name)
 
 
 @pytest.mark.parametrize("name", ["autosnap_2026-09-25_00:00:00_daily", "s1", "syncoid_x.y"])

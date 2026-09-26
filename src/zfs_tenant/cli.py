@@ -96,7 +96,7 @@ def _fail(message: str, status: int = 1) -> int:
 
 
 def _gate(args: argparse.Namespace) -> int:
-    if not names.is_dataset(args.root) or "/" not in args.root:
+    if not names.is_tenant_root(args.root):
         return _fail(f"--root must be a dataset below a pool, got {args.root!r}", USAGE_STATUS)
     if args.zone_pid_file is not None:
         try:
@@ -136,7 +136,7 @@ def _setup(args: argparse.Namespace) -> int:
 
 
 def _zone(args: argparse.Namespace) -> int:
-    if not names.is_dataset(args.root) or "/" not in args.root:
+    if not names.is_tenant_root(args.root):
         return _fail(f"--root must be a dataset below a pool, got {args.root!r}", USAGE_STATUS)
     try:
         return zone.serve(args.root, args.user, args.pid_file, zfs_path=args.zfs, runner=zfs.run)

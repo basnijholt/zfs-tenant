@@ -18,6 +18,11 @@ def is_dataset(name: str) -> bool:
     )
 
 
+def is_tenant_root(name: str) -> bool:
+    """Return whether *name* is an accepted dataset below a pool."""
+    return is_dataset(name) and "/" in name
+
+
 def is_snapshot_name(name: str) -> bool:
     """Return whether *name* is an acceptable snapshot name (the part after ``@``)."""
     return _SNAPSHOT.fullmatch(name) is not None and not name.startswith("-")
