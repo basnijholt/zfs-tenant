@@ -26,6 +26,8 @@ let
     boot.zfs.requestEncryptionCredentials = false;
     # The retention test advances a guest clock; NTP must not reset it.
     services.timesyncd.enable = false;
+    # Snapshots and pushes run only when the test asks, including right after a reboot.
+    systemd.timers.sanoid.wantedBy = pkgs.lib.mkForce [ ];
     networking.hostId = "deadbeef";
     virtualisation.emptyDiskImages = [ 1024 ];
     virtualisation.memorySize = 2048;
@@ -94,6 +96,7 @@ pkgs.testers.runNixOSTest {
           sendOptions = "w";
         };
       };
+      systemd.timers.syncoid-tank-outgoing.wantedBy = pkgs.lib.mkForce [ ];
     };
 
   nodes.sender =
@@ -157,6 +160,7 @@ pkgs.testers.runNixOSTest {
           sendOptions = "w";
         };
       };
+      systemd.timers.syncoid-src-offsite.wantedBy = pkgs.lib.mkForce [ ];
     };
 
   testScript = ''
@@ -200,15 +204,10 @@ pkgs.testers.runNixOSTest {
             print(node.execute("journalctl -u sanoid.service --no-pager -n 100")[1])
             raise AssertionError("sanoid failed; journal above")
 
-    def stop_timers():
-        sender.succeed("systemctl stop sanoid.timer syncoid-src-offsite.timer")
-        host.succeed("systemctl stop sanoid.timer syncoid-tank-outgoing.timer")
-
     host.start(allow_reboot=True)
     sender.start(allow_reboot=True)
     host.wait_for_unit("sshd.service")
     sender.wait_for_unit("multi-user.target")
-    stop_timers()
 
     with subtest("record the tested software versions"):
         for node in (host, sender):
@@ -358,6 +357,16 @@ pkgs.testers.runNixOSTest {
         )
         assert "refused unencrypted dataset tank/friends/joe/plain" in out, out
         host.fail("zfs list tank/friends/joe/plain")
+
+    with subtest("a forced plaintext receive cannot replace an encrypted dataset"):
+        target = "tank/friends/joe/forced"
+        sender.succeed("zfs send -w src/offsite/docs@autosnap_1 | " + via_gate(f"zfs receive {target}"))
+        # With a snapshot left, zfs would refuse the overwrite for that reason before checking encryption.
+        sender.succeed(ask_gate(f"zfs destroy {target}@autosnap_1"))
+        out = sender.fail("zfs send src/plain@s1 | " + via_gate(f"zfs receive -F {target}") + " 2>&1")
+        assert "cannot be used to destroy an encrypted filesystem" in " ".join(out.split()), out
+        assert host.succeed(f"zfs get -H -o value encryption {target}").strip() != "off"
+        sender.succeed(ask_gate(f"zfs destroy -r {target}"))
 
     with subtest("an interrupted receive resumes"):
         sender.fail(
@@ -593,7 +602,6 @@ pkgs.testers.runNixOSTest {
             node.wait_until_succeeds(f"test $(cat /proc/sys/kernel/random/boot_id) != {boot_ids[node.name]}")
         # Preserve monotonic snapshot creation dates if reboot reset the advanced guest clock.
         sender.succeed(f"date -s @{sender_time + 60}")
-        stop_timers()
         host.wait_for_unit("zfs-tenant-zone-joe.service")
         sender.wait_for_unit("zfs-tenant-zone-bas.service")
         host.wait_until_succeeds(f"test -s {pid_file}")

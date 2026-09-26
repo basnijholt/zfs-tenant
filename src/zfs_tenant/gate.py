@@ -123,8 +123,11 @@ def _receive(request: grammar.Receive, config: GateConfig, fx: Effects) -> int:
     if status != 0 or not config.require_encryption:
         return status
     after = _encryption(request.dataset, config, fx)
+    # New datasets, and any a forced receive turned unencrypted; pre-existing plaintext stays.
     plain = sorted(
-        name for name, encryption in after.items() if encryption == "off" and name not in before
+        name
+        for name, encryption in after.items()
+        if encryption == "off" and before.get(name) != "off"
     )
     if not plain:
         return 0

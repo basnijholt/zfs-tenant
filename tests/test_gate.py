@@ -119,6 +119,13 @@ def test_new_plaintext_child_under_encrypted_dataset_is_destroyed() -> None:
     assert (ZFS, "destroy", "-r", DS) not in fake.runs
 
 
+def test_encrypted_dataset_replaced_by_plaintext_is_destroyed() -> None:
+    # Only reachable if zfs receive -F ever overwrote an encrypted dataset; libzfs refuses today.
+    fake = Fake(outputs={LIST_ENCRYPTION: [f"{DS}\taes-256-gcm\n", f"{DS}\toff\n"]})
+    assert gate.handle(f"zfs receive -F {DS}", CONFIG, fake.effects()) == 1
+    assert (ZFS, "destroy", "-r", DS) in fake.runs
+
+
 def test_existing_plaintext_target_is_refused_before_reading_the_stream() -> None:
     fake = Fake(outputs={LIST_ENCRYPTION: [f"{DS}\toff\n"]})
     assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
