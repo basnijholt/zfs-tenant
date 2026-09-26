@@ -1,0 +1,117 @@
+[project]
+name = "zfs-tenant"
+dynamic = ["version"]
+description = "Give a friend a quota-capped corner of your ZFS pool for raw encrypted backups, without giving them a shell"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Bas Nijholt", email = "bas@nijho.lt" }
+]
+maintainers = [
+    { name = "Bas Nijholt", email = "bas@nijho.lt" }
+]
+requires-python = ">=3.10"
+keywords = [
+    "zfs",
+    "openzfs",
+    "backup",
+    "syncoid",
+    "sanoid",
+    "ssh",
+    "forced-command",
+    "delegation",
+    "nixos",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/basnijholt/zfs-tenant"
+Repository = "https://github.com/basnijholt/zfs-tenant"
+Documentation = "https://github.com/basnijholt/zfs-tenant#readme"
+Issues = "https://github.com/basnijholt/zfs-tenant/issues"
+Changelog = "https://github.com/basnijholt/zfs-tenant/releases"
+
+[project.scripts]
+zfs-tenant = "zfs_tenant.cli:main"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/zfs_tenant/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zfs_tenant"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "CPY001",  # no copyright headers; LICENSE covers the project
+    "D203",    # incompatible with D211
+    "D213",    # incompatible with D212
+    "E501",    # formatter handles line length
+    "COM812",  # avoid formatter conflicts
+    "ISC001",  # avoid formatter conflicts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S603", "PLR2004", "D101", "D102", "D103", "D107", "ARG001", "FBT001"]  # relaxed for tests
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "zfs_tenant._version"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.src]
+exclude = [
+    "src/zfs_tenant/_version.py",  # Generated at build time
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.0",
+    "pre-commit>=4.5.0",
+    "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.0",
+    "ty>=0.0.1a13",
+]
