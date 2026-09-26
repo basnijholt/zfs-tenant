@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    needs: pyz
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -23,6 +24,14 @@ jobs:
         run: uv sync --dev --python ${{ matrix.python-version }}
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest -n auto -v
+      - name: Download wheel and zipapp
+        uses: actions/download-artifact@v8
+        with:
+          name: pyz
+      - name: Check the isolated zipapp
+        run: >-
+          uv run --python ${{ matrix.python-version }} pytest tests/check_pyz.py -v
+          --wheel build/wheel/*.whl --pyz dist/zfs-tenant.pyz
 
   lint:
     runs-on: ubuntu-latest
@@ -49,6 +58,14 @@ jobs:
         uses: extractions/setup-just@v3
       - name: Build and smoke-test the zipapp
         run: just pyz
+      - name: Upload wheel and zipapp
+        uses: actions/upload-artifact@v7
+        with:
+          name: pyz
+          path: |
+            build/wheel/*.whl
+            dist/zfs-tenant.pyz
+          if-no-files-found: error
 
   nix:
     runs-on: ubuntu-latest

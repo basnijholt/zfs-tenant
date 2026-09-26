@@ -34,14 +34,17 @@ def fake_zfs(tmp_path: Path) -> Path:
 
 
 def run_gate(
-    fake: Path, command: str | None, stdin: bytes = b""
+    fake: Path, command: str | None, stdin: bytes = b"", *, pyz: Path | None = None
 ) -> subprocess.CompletedProcess[bytes]:
     env = {key: value for key, value in os.environ.items() if key != "SSH_ORIGINAL_COMMAND"}
     if command is not None:
         env["SSH_ORIGINAL_COMMAND"] = command
-    argv = [sys.executable, "-m", "zfs_tenant", "gate", "--root", ROOT]
+    argv = [sys.executable, "-m", "zfs_tenant"] if pyz is None else [sys.executable, "-I", str(pyz)]
+    argv += ["gate", "--root", ROOT]
     argv += ["--zfs", str(fake), "--zpool", str(fake), "--no-require-encryption"]
-    return subprocess.run(argv, input=stdin, capture_output=True, env=env, check=False)
+    return subprocess.run(
+        argv, input=stdin, capture_output=True, env=env, cwd=fake.parent, check=False
+    )
 
 
 def test_gate_runs_allowed_commands(fake_zfs: Path) -> None:
