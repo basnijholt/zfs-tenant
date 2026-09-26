@@ -111,7 +111,7 @@ curl -L -o /mnt/tank/admin/zfs-tenant.pyz \
 Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` where that is possible.
 
 1. Create a local user for Joe with a normal login shell such as bash, no password, and no extra groups. sshd runs forced commands through the login shell. On TrueNAS, give the user a home directory on a pool dataset so its `authorized_keys` persists.
-2. Look at what setup will do, then run it as root:
+2. Preview the initial setup commands, then run setup as root:
 
    ```bash
    python3 zfs-tenant.pyz setup --root tank/friends/joe --user joe --quota 2T --dry-run
@@ -119,6 +119,7 @@ Or install it with `uv tool install zfs-tenant` or `pip install zfs-tenant` wher
    ```
 
    Delegation and properties live in the pool, so they survive reboots and appliance updates.
+   On subsequent runs, setup checks the root's mountpoint and skips resetting it when it is already locally set to `none`; OpenZFS rejects even an unchanged mountpoint write once zoned children inherit it.
 3. Produce the `authorized_keys` line and put it in that user's `~/.ssh/authorized_keys`:
 
    ```bash

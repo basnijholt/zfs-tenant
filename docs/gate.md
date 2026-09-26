@@ -17,7 +17,7 @@ icon: lucide/list-checks
 | `command -v NAME` | nothing (exit 1: "not installed") |
 | `zpool get -o value -H feature@extensible_dataset POOL` | same, only for the root's pool |
 | `zfs get -H name D`, `zfs get -H receive_resume_token D`, `zfs get -H -p used D`, `zfs get -Hpd 1 -t snapshot guid,creation D`, `zfs get -Hpd 1 type,guid,creation D` | same |
-| `zfs receive [-s] [-F] [-u] D↓` | `zfs receive -u [-s] D↓`, then the encryption check |
+| `zfs receive [-s] [-F] [-u] D↓` | `zfs receive -u [-s] [-F] D↓`, then the encryption check |
 | `zfs receive -A D↓` | same |
 | `zfs destroy [-r] D↓@S[,S...]` | same |
 | `zfs destroy D↓@a; zfs destroy D↓@b` (syncoid's chain) | one `zfs destroy D↓@a,b` |

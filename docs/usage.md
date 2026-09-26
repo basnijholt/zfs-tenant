@@ -23,7 +23,7 @@ syncoid --no-privilege-elevation --no-sync-snap --sendoptions=w --compress=none 
 - `--compress=none`: raw encrypted data does not compress. The gate reports that `lzop` and `mbuffer` are missing on its side anyway, so syncoid skips them.
 - `--delete-target-snapshots`: mirror your sanoid retention on the host.
 
-The receive always runs with `-u` and never with `-F`; the gate drops `-F` because nothing under a tenant root can be mounted or modified between receives.
+The receive always runs with `-u` and preserves `-F` when the caller requests it, as syncoid does. This lets ZFS roll back the receiving dataset and remove newer destination snapshots when retention has deleted the newest shared snapshot on the sender but an older common snapshot remains. Without `-F`, such an incremental receive fails even when the host never mounted or modified the backup. Forced receives are limited to datasets strictly below the tenant root and use the existing delegation; omitting `-F` keeps the normal refusal to overwrite divergent receiver state. Keep snapshots you want to preserve on the sender: the destination follows its state and retention, including after missed pushes. If no common snapshot remains, the dataset needs a new full backup.
 Run syncoid as a non-root user with `zfs allow -u <user> send,hold <dataset>` on the sending side.
 
 <!-- OUTPUT:END -->
