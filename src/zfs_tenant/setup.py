@@ -40,6 +40,11 @@ _SECTIONS = {
 }
 _LOCAL = set(LOCAL_PERMISSIONS.split(","))
 _DESCENDANT = set(DESCENDANT_PERMISSIONS.split(","))
+_ALLOWED_RIGHTS = {
+    "Local permissions:": _LOCAL,
+    "Descendent permissions:": _DESCENDANT,
+    "Local+Descendent permissions:": _LOCAL & _DESCENDANT,
+}
 
 
 class SetupError(RuntimeError):
@@ -64,7 +69,7 @@ class TenantSpec:
 
 def validate(spec: TenantSpec) -> None:
     """Raise SetupError unless *spec* is safe to turn into zfs commands."""
-    if not names.is_dataset(spec.root) or "/" not in spec.root:
+    if not names.is_tenant_root(spec.root):
         msg = f"root must be a dataset below a pool, got {spec.root!r}"
         raise SetupError(msg)
     if _USER.fullmatch(spec.user) is None:
@@ -133,11 +138,13 @@ def apply(spec: TenantSpec, *, zfs_path: str, zpool_path: str, runner: Runner) -
     if exists:
         _audit_tree(spec.root, identities, zfs_path, runner)
     keep_mountpoint = exists and _mountpoint_is_local_none(spec, zfs_path, runner)
-    for args in commands(spec, keep_mountpoint=keep_mountpoint):
+    create, *remaining = commands(spec, keep_mountpoint=keep_mountpoint)
+    runner([zfs_path, *create])
+    if not exists:
+        # Parent create-time permissions can appear on the newly created root.
+        _audit_tree(spec.root, identities, zfs_path, runner)
+    for args in remaining:
         runner([zfs_path, *args])
-        if args[0] == "create" and not exists:
-            # Parent create-time permissions can appear on the newly created root.
-            _audit_tree(spec.root, identities, zfs_path, runner)
     local, descendant = _audit_tree(spec.root, identities, zfs_path, runner)
     if local != _LOCAL or descendant != _DESCENDANT:
         _reject("final delegation does not match the intended grants")
@@ -215,9 +222,7 @@ def _root_rights(
         if parts[0] != "user" or parts[1] not in identities:
             _reject(f"unexpected delegation {entry!r} on {root}")
         rights = set(parts[2].split(","))
-        allowed = _LOCAL if section == "Local permissions:" else _DESCENDANT
-        if section == "Local+Descendent permissions:":
-            allowed = _LOCAL & _DESCENDANT
+        allowed = _ALLOWED_RIGHTS[section]
         if not rights <= allowed:
             _reject(f"unexpected delegation rights {parts[2]!r} on {root}")
         if section != "Descendent permissions:":

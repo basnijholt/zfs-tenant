@@ -79,10 +79,16 @@ class Recorder:
         self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, argv: Sequence[str]) -> str:  # noqa: C901, PLR0911, PLR0912 - test ZFS simulator
-        self.calls.append(tuple(argv))
-        if argv[0] == "/sbin/zpool":
+        call = tuple(argv)
+        self.calls.append(call)
+        if call == ("/sbin/zpool", "get", "-H", "-o", "value", "feature@filesystem_limits", "tank"):
             return self.feature + "\n"
-        if argv[1] == "list":
+        assert call[0] == "/sbin/zfs", f"unexpected command: {call!r}"
+        args = call[1:]
+        if args[:-1] in {
+            ("list", "-H", "-o", "name"),
+            ("list", "-H", "-r", "-t", "filesystem,volume", "-o", "name"),
+        }:
             name = argv[-1]
             if name not in self.datasets:
                 raise zfs.CommandError(tuple(argv), 1, "dataset does not exist")
@@ -94,14 +100,16 @@ class Recorder:
                     + "\n"
                 )
             return name + "\n"
-        if argv[1] == "get":
-            if "zoned" in argv:
-                return (self.zoned_parent if argv[-1] != SPEC.root else "on") + "\n"
+        if args[:-1] == ("get", "-H", "-o", "value", "zoned"):
+            assert args[-1] in self.datasets, f"unexpected dataset: {call!r}"
+            return (self.zoned_parent if argv[-1] != SPEC.root else "on") + "\n"
+        if args == ("get", "-H", "-o", "value,source", "mountpoint", SPEC.root):
             if self.mountpoint is None:
                 raise zfs.CommandError(tuple(argv), 1, "cannot open: dataset does not exist")
             return self.mountpoint + "\n"
-        if argv[1] == "allow" and len(argv) == 3:
+        if args[:-1] == ("allow",):
             name = argv[-1]
+            assert name in self.datasets, f"unexpected dataset: {call!r}"
             return "".join(
                 f"---- Permissions on {source} {'-' * 24}\n{self.grants[source]}"
                 for source in (
@@ -112,23 +120,47 @@ class Recorder:
                 )
                 if source in self.grants and (name == source or name.startswith(source + "/"))
             )
-        if argv[1] == "create":
+        if args == ("create", "-p", SPEC.root):
             parts = argv[-1].split("/")
             self.datasets.update("/".join(parts[:n]) for n in range(1, len(parts) + 1))
-        if argv[1] == "unallow":
+            return ""
+        if args == ("unallow", "-u", SPEC.user, SPEC.root):
             self.grants.pop(SPEC.root, None)
-        if argv[1] == "allow" and "-l" in argv:
+            return ""
+        if args == ("allow", "-l", "-u", SPEC.user, "create,mount,receive", SPEC.root):
             self.grants[SPEC.root] = (
                 f"Local permissions:\n\tuser {self.display_user} create,mount,receive\n"
             )
-        if argv[1] == "allow" and "-d" in argv:
+            return ""
+        if args == ("allow", "-d", "-u", SPEC.user, "create,destroy,mount,receive,send", SPEC.root):
             self.grants[SPEC.root] = (
                 f"Local+Descendent permissions:\n\tuser {self.display_user} create,mount,receive\n"
                 f"Descendent permissions:\n\tuser {self.display_user} destroy,send\n"
             )
-        if argv[1] == "set" and "mountpoint=none" in argv and self.mountpoint == "none\tlocal":
-            raise zfs.CommandError(tuple(argv), 255, "child dataset is used in a non-global zone")
-        return ""
+            return ""
+        setting = (
+            "set",
+            "quota=2T",
+            "reservation=none",
+            "filesystem_limit=100",
+            "snapshot_limit=20000",
+            "mountpoint=none",
+            "canmount=off",
+            "readonly=on",
+            "exec=off",
+            "setuid=off",
+            "devices=off",
+            "volmode=none",
+            "zoned=on",
+            SPEC.root,
+        )
+        if args in {setting, tuple(arg for arg in setting if arg != "mountpoint=none")}:
+            if "mountpoint=none" in args:
+                if self.mountpoint == "none\tlocal":
+                    raise zfs.CommandError(call, 255, "child dataset is used in a non-global zone")
+                self.mountpoint = "none\tlocal"
+            return ""
+        pytest.fail(f"unexpected command: {call!r}")
 
 
 def test_apply_checks_the_pool_feature_then_runs_every_command() -> None:
@@ -194,6 +226,8 @@ def test_apply_enforces_a_local_mountpoint_when_not_already_configured(mountpoin
     ("grant", "reason"),
     [
         ("Local permissions:\n user zfs-tenant-joe destroy\n", "destroy"),
+        # Treating combined grants as descendant-only would permit root destruction.
+        ("Local+Descendent permissions:\n user zfs-tenant-joe destroy\n", "destroy"),
         ("Local permissions:\n user another-user create\n", "another-user"),
         ("Local permissions:\n group staff create\n", "group"),
         ("Local permissions:\n everyone create\n", "everyone"),
@@ -207,6 +241,73 @@ def test_apply_enforces_a_local_mountpoint_when_not_already_configured(mountpoin
 )
 def test_existing_unsafe_root_is_rejected_before_mutation(grant: str, reason: str) -> None:
     recorder = Recorder("active", grants={SPEC.root: grant})
+    with pytest.raises(setup.SetupError, match=reason):
+        setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
+    assert not any(
+        call[1] in {"create", "set", "unallow"} or (call[1] == "allow" and len(call) > 3)
+        for call in recorder.calls
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        pytest.param(
+            "--- Permissions on tank/friends/joe ----\n"
+            "Local permissions:\n user zfs-tenant-joe create\n",
+            "unknown",
+            id="malformed-banner",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends/joe ----\n"
+            "Local permissions:\n user zfs-tenant-joe create\n"
+            "---- Permissions on tank/friends/joe ----\n"
+            "Descendent permissions:\n user zfs-tenant-joe send\n",
+            "duplicate",
+            id="repeated-source",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends/joe ----\n"
+            "Local permissions:\n user zfs-tenant-joe create\n"
+            "Local permissions:\n user zfs-tenant-joe mount\n",
+            "repeated",
+            id="repeated-section",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends/joe ----\n",
+            "empty",
+            id="empty-source",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends/joe ----\nLocal permissions:\n",
+            "empty",
+            id="empty-final-section",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends ----\nLocal permissions:\n"
+            "---- Permissions on tank/friends/joe ----\n"
+            "Local permissions:\n user zfs-tenant-joe create\n",
+            "empty",
+            id="empty-section-before-next-source",
+        ),
+        pytest.param(
+            "---- Permissions on tank/friends/joe ----\n"
+            "Local permissions:\n user zfs-tenant-joe create,,mount\n",
+            "malformed",
+            id="malformed-rights",
+        ),
+    ],
+)
+def test_malformed_delegation_output_is_rejected_before_mutation(output: str, reason: str) -> None:
+    # Skipping malformed blocks or overwriting repeated ones could hide unsafe grants.
+    class MalformedRecorder(Recorder):
+        def __call__(self, argv: Sequence[str]) -> str:
+            result = super().__call__(argv)
+            if tuple(argv) == ("/sbin/zfs", "allow", SPEC.root):
+                return output
+            return result
+
+    recorder = MalformedRecorder("active")
     with pytest.raises(setup.SetupError, match=reason):
         setup.apply(SPEC, zfs_path="/sbin/zfs", zpool_path="/sbin/zpool", runner=recorder)
     assert not any(
@@ -327,6 +428,10 @@ def test_final_verification_rejects_missing_grants() -> None:
     "spec",
     [
         setup.TenantSpec(root="tank", user="u", quota="1T"),
+        setup.TenantSpec(root="", user="u", quota="1T"),
+        setup.TenantSpec(root="tank/", user="u", quota="1T"),
+        setup.TenantSpec(root="tank//x", user="u", quota="1T"),
+        setup.TenantSpec(root="tank/..", user="u", quota="1T"),
         setup.TenantSpec(root="tank/x y", user="u", quota="1T"),
         setup.TenantSpec(root="tank/x", user="u;id", quota="1T"),
         setup.TenantSpec(root="tank/x", user="u", quota="lots"),

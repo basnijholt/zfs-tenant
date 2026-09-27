@@ -32,8 +32,7 @@ class Fake:
     def runner(self, argv: Sequence[str]) -> str:
         self.runs.append(tuple(argv))
         queue = self.outputs.get(tuple(argv))
-        if not queue:
-            return ""
+        assert queue, f"no configured response remaining for {tuple(argv)!r}"
         item = queue.pop(0)
         if isinstance(item, zfs.CommandError):
             raise item
@@ -103,7 +102,12 @@ def test_receive_without_force_does_not_request_rollback() -> None:
 
 
 def test_new_plaintext_dataset_is_destroyed() -> None:
-    fake = Fake(outputs={LIST_ENCRYPTION: [MISSING, f"{DS}\toff\n{DS}/child\toff\n"]})
+    fake = Fake(
+        outputs={
+            LIST_ENCRYPTION: [MISSING, f"{DS}\toff\n{DS}/child\toff\n"],
+            (ZFS, "destroy", "-r", DS): [""],
+        }
+    )
     assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
     assert (ZFS, "destroy", "-r", DS) in fake.runs
     assert (ZFS, "destroy", "-r", f"{DS}/child") not in fake.runs
@@ -113,7 +117,9 @@ def test_new_plaintext_dataset_is_destroyed() -> None:
 def test_new_plaintext_child_under_encrypted_dataset_is_destroyed() -> None:
     before = f"{DS}\taes-256-gcm\n"
     after = f"{DS}\taes-256-gcm\n{DS}/child\toff\n"
-    fake = Fake(outputs={LIST_ENCRYPTION: [before, after]})
+    fake = Fake(
+        outputs={LIST_ENCRYPTION: [before, after], (ZFS, "destroy", "-r", f"{DS}/child"): [""]}
+    )
     assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
     assert (ZFS, "destroy", "-r", f"{DS}/child") in fake.runs
     assert (ZFS, "destroy", "-r", DS) not in fake.runs
@@ -121,7 +127,12 @@ def test_new_plaintext_child_under_encrypted_dataset_is_destroyed() -> None:
 
 def test_encrypted_dataset_replaced_by_plaintext_is_destroyed() -> None:
     # Only reachable if zfs receive -F ever overwrote an encrypted dataset; libzfs refuses today.
-    fake = Fake(outputs={LIST_ENCRYPTION: [f"{DS}\taes-256-gcm\n", f"{DS}\toff\n"]})
+    fake = Fake(
+        outputs={
+            LIST_ENCRYPTION: [f"{DS}\taes-256-gcm\n", f"{DS}\toff\n"],
+            (ZFS, "destroy", "-r", DS): [""],
+        }
+    )
     assert gate.handle(f"zfs receive -F {DS}", CONFIG, fake.effects()) == 1
     assert (ZFS, "destroy", "-r", DS) in fake.runs
 
@@ -131,6 +142,36 @@ def test_existing_plaintext_target_is_refused_before_reading_the_stream() -> Non
     assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
     assert not fake.spawns
     assert "unencrypted" in fake.errors[0]
+
+
+def test_existing_plaintext_child_survives_receive_of_encrypted_parent() -> None:
+    # Removing the before-state comparison would destroy pre-existing plaintext data.
+    tree = f"{DS}\taes-256-gcm\n{DS}/child\toff\n"
+    fake = Fake(outputs={LIST_ENCRYPTION: [tree, tree]})
+    assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 0
+    assert fake.spawns == [((ZFS, "receive", "-u", DS), True)]
+    assert fake.runs == [LIST_ENCRYPTION, LIST_ENCRYPTION]
+    assert not fake.errors
+
+
+def test_failed_post_receive_inspection_does_not_report_success() -> None:
+    # A successful receive must not hide a failure to inspect its encryption state.
+    error = zfs.CommandError(LIST_ENCRYPTION, 2, "I/O error\n")
+    fake = Fake(outputs={LIST_ENCRYPTION: [MISSING, error]})
+    assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
+    assert fake.spawns == [((ZFS, "receive", "-u", DS), True)]
+    assert fake.runs == [LIST_ENCRYPTION, LIST_ENCRYPTION]
+    assert "I/O error" in fake.errors[0]
+
+
+def test_failed_plaintext_cleanup_does_not_report_success() -> None:
+    # Cleanup errors must reach the caller, not become a successful receive.
+    destroy = (ZFS, "destroy", "-r", DS)
+    error = zfs.CommandError(destroy, 2, "dataset is busy\n")
+    fake = Fake(outputs={LIST_ENCRYPTION: [MISSING, f"{DS}\toff\n"], destroy: [error]})
+    assert gate.handle(f"zfs receive {DS}", CONFIG, fake.effects()) == 1
+    assert destroy in fake.runs
+    assert "dataset is busy" in fake.errors[0]
 
 
 def test_failed_receive_skips_the_post_check() -> None:

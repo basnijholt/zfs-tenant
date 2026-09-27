@@ -7,6 +7,7 @@
 }:
 let
   hostPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/host_key.pub);
+  annClientPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/ann_client_key.pub);
   clientPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/client_key.pub);
   # The reverse direction has its own keys, so a swapped host-key pin or key fails the test.
   senderHostPublicKey = pkgs.lib.strings.trim (builtins.readFile ./integration/sender_host_key.pub);
@@ -75,6 +76,23 @@ pkgs.testers.runNixOSTest {
             nodes.sender.networking.primaryIPAddress
             nodes.sender.networking.primaryIPv6Address
           ];
+        };
+      };
+      # A second tenant shares this receiver, but has its own key, uid, zone and limits.
+      services.zfs-tenant.tenants.ann = {
+        user = "backup-ann";
+        dataset = "tank/friends/ann";
+        quota = "192M";
+        authorizedKeys = [ annClientPublicKey ];
+        allowedFrom = [
+          nodes.sender.networking.primaryIPAddress
+          nodes.sender.networking.primaryIPv6Address
+        ];
+        resourceLimits = {
+          memoryMax = "384M";
+          tasksMax = 48;
+          cpuQuota = "75%";
+          processLimit = 112;
         };
       };
       services.sanoid = {
@@ -176,18 +194,24 @@ pkgs.testers.runNixOSTest {
         "-o BatchMode=yes -o StrictHostKeyChecking=yes zfs-tenant-joe@host"
     )
 
-    def via_gate(command):
-        # For pipelines that feed a stream into the gate.
-        return f"{gate} {shlex.quote(command)}"
+    ann_gate = (
+        "timeout 120 ssh -T -i /root/ann_client_key -o IdentitiesOnly=yes "
+        "-o BatchMode=yes -o StrictHostKeyChecking=yes backup-ann@host"
+    )
 
-    def ask_gate(command):
+    def via_gate(command, ssh=gate):
+        # For pipelines that feed a stream into the gate.
+        return f"{ssh} {shlex.quote(command)}"
+
+    def ask_gate(command, ssh=gate):
         # Without a pipe, ssh would read the test driver's console as its stdin.
-        return f"{via_gate(command)} </dev/null"
+        return f"{via_gate(command, ssh)} </dev/null"
 
     def snapshots(dataset):
         return host.succeed(f"zfs list -H -o name -t snapshot -r {dataset}")
 
     pid_file = "/run/zfs-tenant/joe/holder.pid"
+    ann_pid_file = "/run/zfs-tenant/ann/holder.pid"
 
     def as_tenant_in_zone(command):
         # What the gate's own processes see: the tenant uid inside its user namespace.
@@ -230,6 +254,10 @@ pkgs.testers.runNixOSTest {
         # Setup failed at boot (no pool yet), so its zone never started.
         host.succeed("systemctl restart zfs-tenant-zone-joe.service")
         host.wait_until_succeeds(f"test -s {pid_file}")
+        host.succeed("systemctl restart zfs-tenant-setup-ann.service zfs-tenant-zone-ann.service")
+        host.wait_until_succeeds(f"test -s {ann_pid_file}")
+        assert host.succeed(f"cat {pid_file}") != host.succeed(f"cat {ann_pid_file}")
+        sender.succeed("install -m 400 ${./integration/ann_client_key} /root/ann_client_key")
         sender.succeed("zpool create -f -O mountpoint=/src src /dev/vdb")
         sender.succeed("touch /var/lib/test-pool-ready")
         sender.succeed("printf correcthorsebatterystaple > /root/pp")
@@ -256,6 +284,19 @@ pkgs.testers.runNixOSTest {
         ):
             node.succeed("install -d -m 700 -o syncoid -g syncoid /var/lib/syncoid")
             node.succeed(f"install -m 400 -o syncoid -g syncoid {key} /var/lib/syncoid/id_ed25519")
+
+    with subtest("two tenants on one receiver manage separate dataset trees"):
+        listings = []
+        for root, ssh in (("tank/friends/joe", gate), ("tank/friends/ann", ann_gate)):
+            assert sender.succeed(ask_gate("zfs list -H -o name -r", ssh)).splitlines() == [root]
+            sender.succeed(ask_gate(f"zfs create {root}/own-child", ssh))
+            listing = set(sender.succeed(ask_gate("zfs list -H -o name -r", ssh)).splitlines())
+            assert listing == {root, f"{root}/own-child"}, listing
+            listings.append(listing)
+        assert listings[0].isdisjoint(listings[1]), listings
+        for root, ssh in (("tank/friends/joe", gate), ("tank/friends/ann", ann_gate)):
+            sender.succeed(ask_gate(f"zfs destroy {root}/own-child", ssh))
+            assert sender.succeed(ask_gate("zfs list -H -o name -r", ssh)).splitlines() == [root]
 
     with subtest("setup locks down the tenant root and is idempotent"):
         props = host.succeed(
@@ -376,6 +417,18 @@ pkgs.testers.runNixOSTest {
         push()
         assert "tank/friends/joe/offsite/docs@autosnap_2" in snapshots("tank/friends/joe")
 
+    with subtest("the second tenant receives an encrypted backup on the same host"):
+        sender.succeed(
+            "zfs send -w src/offsite/docs@autosnap_1 | "
+            + via_gate("zfs receive tank/friends/ann/docs", ann_gate)
+        )
+        assert snapshots("tank/friends/ann") == "tank/friends/ann/docs@autosnap_1\n"
+        assert host.succeed("zfs get -H -o value keystatus tank/friends/ann/docs").strip() == "unavailable"
+        joe_listing = set(sender.succeed(ask_gate("zfs list -H -o name -r")).splitlines())
+        ann_listing = set(sender.succeed(ask_gate("zfs list -H -o name -r", ann_gate)).splitlines())
+        assert ann_listing == {"tank/friends/ann", "tank/friends/ann/docs"}, ann_listing
+        assert joe_listing.isdisjoint(ann_listing), (joe_listing, ann_listing)
+
     with subtest("the host never mounts tenant data"):
         host.succeed("zfs mount -a")
         assert "friends" not in host.succeed("mount")
@@ -414,13 +467,19 @@ pkgs.testers.runNixOSTest {
         out = host.fail("su zfs-tenant-joe -s /bin/sh -c 'zfs create tank/friends/joe/outside' 2>&1")
         assert "permission denied" in out, out
 
-    with subtest("the gate fails closed while the zone is down and recovers on restart"):
+    with subtest("restarting one zone leaves the other tenant available"):
+        ann_pid = host.succeed(f"cat {ann_pid_file}")
+        ann_listing = sender.succeed(ask_gate("zfs list -H -o name -r", ann_gate))
         host.succeed("systemctl stop zfs-tenant-zone-joe.service")
         out = sender.fail(ask_gate("zfs list") + " 2>&1")
         assert "the tenant namespace is not running" in out, out
+        assert sender.succeed(ask_gate("zfs list -H -o name -r", ann_gate)) == ann_listing
+        assert host.succeed(f"cat {ann_pid_file}") == ann_pid
         host.succeed("systemctl start zfs-tenant-zone-joe.service")
         host.wait_until_succeeds(f"test -s {pid_file}")
         assert "tank/friends/joe/offsite" in sender.succeed(ask_gate("zfs list -H -o name -r"))
+        assert sender.succeed(ask_gate("zfs list -H -o name -r", ann_gate)) == ann_listing
+        assert host.succeed(f"cat {ann_pid_file}") == ann_pid
 
     with subtest("the kernel denies the tenant user outside its subtree"):
         # Even with a shell and no gate, delegation stops the tenant user at its root.
@@ -687,6 +746,14 @@ pkgs.testers.runNixOSTest {
         # Preserve monotonic snapshot creation dates if reboot reset the advanced guest clock.
         sender.succeed(f"date -s @{sender_time + 60}")
         host.wait_for_unit("zfs-tenant-zone-joe.service")
+        host.wait_for_unit("zfs-tenant-zone-ann.service")
+        host.wait_until_succeeds(f"test -s {ann_pid_file}")
+        ann_listing = sender.succeed(ask_gate("zfs list -H -o name -r", ann_gate)).splitlines()
+        assert set(ann_listing) == {"tank/friends/ann", "tank/friends/ann/docs"}, ann_listing
+        sender.succeed(ask_gate("zfs create tank/friends/ann/after-reboot", ann_gate))
+        sender.succeed(ask_gate("zfs destroy tank/friends/ann/after-reboot", ann_gate))
+        assert snapshots("tank/friends/ann") == "tank/friends/ann/docs@autosnap_1\n"
+        assert host.succeed("zfs get -H -o value keystatus tank/friends/ann/docs").strip() == "unavailable"
         sender.wait_for_unit("zfs-tenant-zone-bas.service")
         host.wait_until_succeeds(f"test -s {pid_file}")
         sender.wait_until_succeeds("test -s /run/zfs-tenant/bas/holder.pid")

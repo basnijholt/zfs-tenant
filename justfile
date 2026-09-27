@@ -22,13 +22,8 @@ lint:
 
 # Build the single-file zipapp used on hosts without pip (e.g. TrueNAS SCALE)
 pyz:
-    rm -rf build/pyz && mkdir -p build/pyz dist
-    uv build --wheel --out-dir build/wheel
-    cp -r src/zfs_tenant build/pyz/
-    find build/pyz -name __pycache__ -prune -exec rm -rf {} +
-    printf 'from zfs_tenant.cli import main\nraise SystemExit(main())\n' > build/pyz/__main__.py
-    python3 -m zipapp build/pyz --compress -p "/usr/bin/env python3" -o dist/zfs-tenant.pyz
-    python3 dist/zfs-tenant.pyz --version
+    uv run python scripts/build_pyz.py
+    uv run python dist/zfs-tenant.pyz --version
 
 # Run the two-node NixOS VM test against real OpenZFS and syncoid
 vm-test:
