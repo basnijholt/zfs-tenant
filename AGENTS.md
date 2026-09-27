@@ -54,7 +54,7 @@ Use `just` for common tasks. Run `just` to list available commands:
 
 ## Testing
 
-- Unit tests never touch ZFS. `tests/test_gate.py` injects fake `Effects` (runner, spawner, log, error writer); `tests/test_cli.py` runs `python -m zfs_tenant gate` against a fake `zfs` shell script to check the environment, stdin, and exit-status wiring.
+- Unit tests never touch ZFS. `tests/test_gate.py` injects fake `_Effects` (runner, spawner, log, error writer); `tests/test_cli.py` runs `python -m zfs_tenant gate` against a fake `zfs` shell script to check the environment, stdin, and exit-status wiring.
 - `nix/integration-test.nix` is the ground truth for ZFS and syncoid behavior. When the grammar changes, run `just vm-test`. When a syncoid push fails there, the test prints the push journal and the gate's auth log.
 - Any new accepted command needs rejection tests for its near misses (outside the root, the root itself, extra flags).
 

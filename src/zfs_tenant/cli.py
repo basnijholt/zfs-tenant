@@ -14,7 +14,7 @@ from zfs_tenant import __version__, gate, names, setup, zfs, zone
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-USAGE_STATUS = 2
+_USAGE_STATUS = 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -97,7 +97,7 @@ def _fail(message: str, status: int = 1) -> int:
 
 def _gate(args: argparse.Namespace) -> int:
     if not names.is_tenant_root(args.root):
-        return _fail(f"--root must be a dataset below a pool, got {args.root!r}", USAGE_STATUS)
+        return _fail(f"--root must be a dataset below a pool, got {args.root!r}", _USAGE_STATUS)
     if args.zone_pid_file is not None:
         try:
             zone.enter(args.zone_pid_file)
@@ -137,7 +137,7 @@ def _setup(args: argparse.Namespace) -> int:
 
 def _zone(args: argparse.Namespace) -> int:
     if not names.is_tenant_root(args.root):
-        return _fail(f"--root must be a dataset below a pool, got {args.root!r}", USAGE_STATUS)
+        return _fail(f"--root must be a dataset below a pool, got {args.root!r}", _USAGE_STATUS)
     try:
         return zone.serve(args.root, args.user, args.pid_file, zfs_path=args.zfs, runner=zfs.run)
     except (zone.ZoneError, zfs.CommandError, KeyError) as error:
@@ -149,7 +149,7 @@ def _authorized_key(args: argparse.Namespace) -> int:
     fields = (args.gate_command, args.sources, key)
     if any('"' in value or "\n" in value or "\r" in value for value in fields):
         return _fail(
-            "the gate command, sources, and key must not contain quotes or newlines", USAGE_STATUS
+            "the gate command, sources, and key must not contain quotes or newlines", _USAGE_STATUS
         )
     sys.stdout.write(f'restrict,from="{args.sources}",command="{args.gate_command}" {key}\n')
     return 0

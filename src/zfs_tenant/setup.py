@@ -12,7 +12,7 @@ from zfs_tenant import names, zfs
 if TYPE_CHECKING:
     from zfs_tenant.zfs import Runner
 
-FIXED_PROPERTIES = (
+_FIXED_PROPERTIES = (
     "mountpoint=none",
     "canmount=off",
     "readonly=on",
@@ -24,8 +24,8 @@ FIXED_PROPERTIES = (
     # OpenZFS also refuses to set sharenfs/sharesmb once zoned=on.
     "zoned=on",
 )
-LOCAL_PERMISSIONS = "create,mount,receive"
-DESCENDANT_PERMISSIONS = "create,destroy,mount,receive,send"
+_LOCAL_PERMISSIONS = "create,mount,receive"
+_DESCENDANT_PERMISSIONS = "create,destroy,mount,receive,send"
 
 _SIZE = re.compile(r"[0-9]+(?:\.[0-9]+)?[KMGTPE]?")
 _USER = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
@@ -38,8 +38,8 @@ _SECTIONS = {
     "Descendent permissions:",
     "Local+Descendent permissions:",
 }
-_LOCAL = set(LOCAL_PERMISSIONS.split(","))
-_DESCENDANT = set(DESCENDANT_PERMISSIONS.split(","))
+_LOCAL = set(_LOCAL_PERMISSIONS.split(","))
+_DESCENDANT = set(_DESCENDANT_PERMISSIONS.split(","))
 _ALLOWED_RIGHTS = {
     "Local permissions:": _LOCAL,
     "Descendent permissions:": _DESCENDANT,
@@ -95,14 +95,14 @@ def commands(spec: TenantSpec, *, keep_mountpoint: bool = False) -> list[list[st
         f"reservation={spec.reservation or 'none'}",
         f"filesystem_limit={spec.filesystem_limit}",
         f"snapshot_limit={spec.snapshot_limit}",
-        *(p for p in FIXED_PROPERTIES if not (keep_mountpoint and p == "mountpoint=none")),
+        *(p for p in _FIXED_PROPERTIES if not (keep_mountpoint and p == "mountpoint=none")),
     ]
     return [
         ["create", "-p", spec.root],
         ["set", *properties, spec.root],
         ["unallow", "-u", spec.user, spec.root],
-        ["allow", "-l", "-u", spec.user, LOCAL_PERMISSIONS, spec.root],
-        ["allow", "-d", "-u", spec.user, DESCENDANT_PERMISSIONS, spec.root],
+        ["allow", "-l", "-u", spec.user, _LOCAL_PERMISSIONS, spec.root],
+        ["allow", "-d", "-u", spec.user, _DESCENDANT_PERMISSIONS, spec.root],
     ]
 
 
