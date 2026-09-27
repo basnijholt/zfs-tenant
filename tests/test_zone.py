@@ -82,4 +82,4 @@ def test_dropping_capabilities_as_an_unprivileged_process_leaves_none() -> None:
     # and the CapEff check work; the VM test covers the namespace case.
     if os.getuid() == 0:
         pytest.skip("needs an unprivileged user")
-    zone._drop_capabilities()  # noqa: SLF001
+    zone._drop_capabilities()

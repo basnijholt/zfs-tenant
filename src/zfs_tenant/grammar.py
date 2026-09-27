@@ -103,7 +103,7 @@ _NO_ARGS_PROBES = (["exit"], ["echo", "-n"], ["ps", "-Ao", "args="])
 _POOL_FEATURE_PROBE = ["zpool", "get", "-o", "value", "-H", "feature@extensible_dataset"]
 
 
-def tokenize(command: str) -> list[str] | None:
+def _tokenize(command: str) -> list[str] | None:
     """Split *command* like a POSIX shell, keeping runs of ``;|&<>`` as separate tokens.
 
     Returns None for control characters or unbalanced quotes.
@@ -121,7 +121,7 @@ def tokenize(command: str) -> list[str] | None:
 
 def parse(command: str, root: str) -> Request | Rejected:
     """Return the single request *command* asks for, scoped to the tenant *root*."""
-    tokens = tokenize(command)
+    tokens = _tokenize(command)
     if not tokens:
         return Rejected("empty command, unbalanced quotes, or control characters")
     statements = _split_statements(tokens)

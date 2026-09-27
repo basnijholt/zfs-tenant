@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from zfs_tenant.grammar import Receive, Rejected, Reply, ResumeSend, Run, parse, tokenize
+from zfs_tenant.grammar import Receive, Rejected, Reply, ResumeSend, Run, _tokenize, parse
 
 ROOT = "tank/friends/joe"
 DS = f"{ROOT}/offsite"
@@ -159,7 +159,7 @@ def test_outside_reason_names_the_root() -> None:
 
 
 def test_tokenize_resolves_syncoid_quoting() -> None:
-    assert tokenize(f"  zfs receive  -s -F '{DS}' 2>&1") == [
+    assert _tokenize(f"  zfs receive  -s -F '{DS}' 2>&1") == [
         "zfs",
         "receive",
         "-s",
@@ -172,5 +172,5 @@ def test_tokenize_resolves_syncoid_quoting() -> None:
 
 
 def test_tokenize_refuses_control_characters_and_bad_quotes() -> None:
-    assert tokenize("zfs list\nreboot") is None
-    assert tokenize("zfs list 'x") is None
+    assert _tokenize("zfs list\nreboot") is None
+    assert _tokenize("zfs list 'x") is None

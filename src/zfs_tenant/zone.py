@@ -28,7 +28,7 @@ from zfs_tenant import zfs
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-CLONE_NEWUSER = 0x10000000
+_CLONE_NEWUSER = 0x10000000
 _PR_SET_DUMPABLE = 4
 _CAPABILITY_VERSION_3 = 0x20080522
 _STOP_SIGNALS = {signal.SIGTERM, signal.SIGINT}
@@ -99,7 +99,7 @@ def enter(pid_file: Path) -> None:
         msg = f"the tenant namespace is not running (pid {pid}: {error.strerror})"
         raise ZoneError(msg) from error
     try:
-        _syscall("setns", fd, CLONE_NEWUSER)
+        _syscall("setns", fd, _CLONE_NEWUSER)
     except OSError as error:
         msg = f"cannot join the tenant namespace: {error.strerror}"
         raise ZoneError(msg) from error
@@ -127,7 +127,7 @@ def _hold(uid: int, gid: int, ready: int) -> NoReturn:
         # Changing uid makes a process non-dumpable, which would hide /proc/<pid>/ns
         # from the tenant's own gate processes.
         _libc("prctl", _PR_SET_DUMPABLE, 1, 0, 0, 0)
-        _syscall("unshare", CLONE_NEWUSER)
+        _syscall("unshare", _CLONE_NEWUSER)
         Path("/proc/self/setgroups").write_text("deny")
         Path("/proc/self/uid_map").write_text(f"{uid} {uid} 1\n")
         Path("/proc/self/gid_map").write_text(f"{gid} {gid} 1\n")

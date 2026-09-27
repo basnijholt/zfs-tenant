@@ -16,6 +16,12 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  - repo: https://github.com/basnijholt/privata
+    rev: v0.8.0
+    hooks:
+      - id: privata
+        args: [--methods]
+
   - repo: local
     hooks:
       - id: mypy

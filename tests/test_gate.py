@@ -42,8 +42,8 @@ class Fake:
         self.spawns.append((tuple(argv), merge_stderr))
         return self.spawn_status
 
-    def effects(self) -> gate.Effects:
-        return gate.Effects(
+    def effects(self) -> gate._Effects:
+        return gate._Effects(
             runner=self.runner,
             spawner=self.spawner,
             log=self.logs.append,
@@ -53,14 +53,14 @@ class Fake:
 
 def test_interactive_session_is_denied() -> None:
     fake = Fake()
-    assert gate.handle(None, CONFIG, fake.effects()) == gate.DENIED_STATUS
+    assert gate.handle(None, CONFIG, fake.effects()) == gate._DENIED_STATUS
     assert fake.errors == ["zfs-tenant: interactive sessions are not allowed"]
     assert not fake.spawns
 
 
 def test_rejected_command_runs_nothing() -> None:
     fake = Fake()
-    assert gate.handle("reboot", CONFIG, fake.effects()) == gate.DENIED_STATUS
+    assert gate.handle("reboot", CONFIG, fake.effects()) == gate._DENIED_STATUS
     assert fake.errors == [
         "zfs-tenant: command not allowed: only zfs commands and syncoid's probes are allowed"
     ]
@@ -210,7 +210,7 @@ def test_resume_send_in_scope_spawns_send() -> None:
 
 def test_resume_send_outside_scope_is_denied() -> None:
     fake = Fake(outputs={(ZFS, "send", "-nvP", "-t", TOKEN): [describe("tank/host@s1")]})
-    assert gate.handle(f"zfs send -t {TOKEN}", CONFIG, fake.effects()) == gate.DENIED_STATUS
+    assert gate.handle(f"zfs send -t {TOKEN}", CONFIG, fake.effects()) == gate._DENIED_STATUS
     assert not fake.spawns
 
 
