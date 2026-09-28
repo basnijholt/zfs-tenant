@@ -67,6 +67,9 @@ How zfs-tenant came together, and what the VM tests turned up along the way, is 
 
 ## How it works
 
+The examples call the friend Joe.
+He is the real friend I built this with, and he stayed in the docs as the example tenant.
+
 ```mermaid
 flowchart LR
     subgraph joe["Joe's machine"]
