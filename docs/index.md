@@ -52,6 +52,8 @@ What delegation alone does not do is stop that user from listing every dataset o
 zfs-tenant closes that gap twice: a forced command that only runs backup commands, and a user namespace that `zfs zone` restricts to the friend's own datasets.
 It also comes with a setup command and a NixOS module that turn the host side into a few lines of config; the sending side is plain syncoid.
 
+How zfs-tenant came together, and what the VM tests turned up along the way, is in the blog post [Friend-to-friend ZFS backups, version two](https://www.nijho.lt/post/zfs-tenant/).
+
 <!-- OUTPUT:END -->
 
 <!-- CODE:START -->

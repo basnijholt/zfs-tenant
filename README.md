@@ -59,6 +59,8 @@ What delegation alone does not do is stop that user from listing every dataset o
 zfs-tenant closes that gap twice: a forced command that only runs backup commands, and a user namespace that `zfs zone` restricts to the friend's own datasets.
 It also comes with a setup command and a NixOS module that turn the host side into a few lines of config; the sending side is plain syncoid.
 
+How zfs-tenant came together, and what the VM tests turned up along the way, is in the blog post [Friend-to-friend ZFS backups, version two](https://www.nijho.lt/post/zfs-tenant/).
+
 <!-- SECTION:why:END -->
 
 <!-- SECTION:how-it-works:START -->
@@ -93,6 +95,10 @@ The kernel is the jail; the gate removes the shell.
 <!-- SECTION:security-model:START -->
 
 ## Security model
+
+Which layer stops what, for the things Joe's key might try:
+
+![Seven things Joe's key might try and the layer that stops each one: the network refuses other devices and keys; the SSH gate refuses a shell, answers syncoid's ps check with nothing, and refuses names outside his root, with the zone as a second wall; zfs allow refuses a hostile property and the quota refuses a push beyond it. Only his raw encrypted backup reaches your pool.](https://raw.githubusercontent.com/basnijholt/zfs-tenant/main/docs/layers.svg)
 
 | Promise | Enforced by |
 |---|---|
