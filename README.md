@@ -171,6 +171,21 @@ Add the flake to the host:
 }
 ```
 
+Without flakes, import the module by path; it builds the package with `pkgs.callPackage` from the same source:
+
+```nix
+let
+  # Pin a commit (or use npins or niv) instead of following main.
+  zfs-tenant = builtins.fetchTarball "https://github.com/basnijholt/zfs-tenant/archive/main.tar.gz";
+in
+{
+  imports = [ "${zfs-tenant}/nix/host-module.nix" ];
+}
+```
+
+The package itself is `nix/package.nix` (for `pkgs.callPackage`), and `nix/overlay.nix` adds it as `pkgs.zfs-tenant`.
+Outside the flake it reports version `0.0.0`; pass `{ version = "..."; }` to `callPackage` or `.override` to change that.
+
 On the host, give Joe a tenant root:
 
 ```nix

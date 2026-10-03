@@ -149,7 +149,9 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      description = "Package providing the zfs-tenant executable. The flake module sets it.";
+      default = pkgs.callPackage ./package.nix { };
+      defaultText = lib.literalExpression "pkgs.callPackage ./nix/package.nix { }";
+      description = "Package providing the zfs-tenant executable. The flake module sets one with its version.";
     };
 
     zfsPackage = lib.mkOption {

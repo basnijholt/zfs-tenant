@@ -86,5 +86,11 @@ jobs:
             system-features = nixos-test benchmark big-parallel kvm
       - name: Check flake (package, unit tests, module assertions)
         run: nix flake check --no-write-lock-file -L
+      - name: Build without flakes (default.nix, locked nixpkgs)
+        env:
+          NIX_CONFIG: "experimental-features ="
+        run: |
+          rev=$(jq -r .nodes.nixpkgs.locked.rev flake.lock)
+          nix-build --no-out-link -I "nixpkgs=https://github.com/NixOS/nixpkgs/archive/$rev.tar.gz"
       - name: Run the two-node ZFS VM test
         run: nix build .#checks.x86_64-linux.integration --no-link --no-write-lock-file -L

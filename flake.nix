@@ -13,35 +13,13 @@
       ];
       forAllSystems = lib.genAttrs systems;
       version = "0.0.0+${builtins.substring 0 8 (self.lastModifiedDate or "19700101")}";
-
-      mkPackage =
-        pkgs:
-        pkgs.python3Packages.buildPythonApplication {
-          pname = "zfs-tenant";
-          inherit version;
-          pyproject = true;
-          src = self;
-          build-system = with pkgs.python3Packages; [
-            hatchling
-            hatch-vcs
-          ];
-          env.SETUPTOOLS_SCM_PRETEND_VERSION = version;
-          nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
-          pythonImportsCheck = [ "zfs_tenant" ];
-          meta = {
-            description = "Give a friend a quota-capped corner of your ZFS pool for raw encrypted backups";
-            homepage = "https://github.com/basnijholt/zfs-tenant";
-            license = lib.licenses.mit;
-            mainProgram = "zfs-tenant";
-            platforms = lib.platforms.linux;
-          };
-        };
-
     in
     {
       packages = forAllSystems (system: {
-        default = mkPackage nixpkgs.legacyPackages.${system};
+        default = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix { inherit version; };
       });
+
+      overlays.default = import ./nix/overlay.nix;
 
       nixosModules = {
         default = self.nixosModules.host;
@@ -62,9 +40,10 @@
         in
         {
           package = self.packages.${system}.default;
+          # The bare module, as imported without flakes; the VM test covers the flake module.
           modules = import ./nix/module-test.nix {
             inherit lib pkgs system;
-            hostModule = self.nixosModules.host;
+            hostModule = ./nix/host-module.nix;
           };
         }
         # End-to-end VM test against real OpenZFS and syncoid; KVM only on x86_64-linux in CI.

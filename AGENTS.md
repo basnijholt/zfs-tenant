@@ -20,9 +20,13 @@ src/zfs_tenant/
 ├── zone.py       # holder process + zfs zone (root side); setns into it (gate side)
 └── zfs.py        # captured subprocess runner, CommandError
 nix/
-├── host-module.nix       # services.zfs-tenant
+├── package.nix           # the package in callPackage form; flake, overlay, module, default.nix use it
+├── overlay.nix           # adds pkgs.zfs-tenant
+├── host-module.nix       # services.zfs-tenant; works imported by path, without flakes
+├── module-test.nix       # module assertions and wiring, evaluated without booting a VM
 ├── integration-test.nix  # two-node VM test, real OpenZFS, sender on nixpkgs services.syncoid
 └── integration/          # throwaway SSH keys for the VM test only
+default.nix               # nix-build without flakes
 docs/                     # Zensical site, deployed to https://zfs-tenant.nijho.lt
 ```
 
